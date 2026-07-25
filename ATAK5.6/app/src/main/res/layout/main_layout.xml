@@ -11,58 +11,68 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:background="@color/icu_bg_root">
 
-        <!-- Top status HUD (docked row) -->
+        <!-- Header: live status + destination + settings (mirrors the Settings header) -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="@dimen/icu_header_height"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:background="@drawable/bg_hud_panel"
-            android:paddingStart="10dp"
-            android:paddingEnd="4dp"
-            android:paddingTop="4dp"
-            android:paddingBottom="4dp">
+            android:background="@color/icu_bg_surface"
+            android:paddingStart="@dimen/icu_space_lg"
+            android:paddingEnd="@dimen/icu_space_sm">
 
             <View
                 android:id="@+id/icu_live_dot"
-                android:layout_width="12dp"
-                android:layout_height="12dp"
+                android:layout_width="10dp"
+                android:layout_height="10dp"
+                android:layout_marginEnd="@dimen/icu_space_sm"
                 android:background="@drawable/live_dot"
                 android:visibility="gone" />
 
             <TextView
                 android:id="@+id/icu_status"
+                style="@style/Icu.Text.Title"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="8dp"
-                android:textColor="@color/icu_text"
-                android:textStyle="bold"
+                android:singleLine="true"
+                android:ellipsize="end"
                 android:text="@string/icu_status_idle" />
 
             <TextView
                 android:id="@+id/icu_dest_badge"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="4dp"
+                android:layout_marginStart="@dimen/icu_space_sm"
+                android:layout_marginEnd="@dimen/icu_space_sm"
+                android:background="@drawable/bg_badge"
+                android:paddingStart="@dimen/icu_space_sm"
+                android:paddingEnd="@dimen/icu_space_sm"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:maxEms="12"
                 android:textColor="@color/icu_accent"
-                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textSize="11sp"
                 android:text="LAN" />
 
             <ImageButton
                 android:id="@+id/icu_settings_button"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
-                android:padding="7dp"
+                android:padding="8dp"
                 android:src="@drawable/ic_settings"
                 android:scaleType="fitCenter"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/icu_settings" />
         </LinearLayout>
 
-        <!-- Body row: video fills remaining space, side panel docked at the right edge -->
+        <!-- Body row: video fills remaining space, quick-action rail docked at the right edge -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
@@ -73,29 +83,19 @@
                 android:id="@+id/icu_preview_container"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_weight="1">
+                android:layout_weight="1"
+                android:background="@color/icu_bg_root">
 
                 <TextView
                     android:id="@+id/icu_preview_hint"
+                    style="@style/Icu.Text.Body"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center"
-                    android:textColor="#888888"
+                    android:gravity="center"
+                    android:padding="@dimen/icu_space_lg"
+                    android:textColor="@color/icu_text_muted"
                     android:text="@string/icu_preview_placeholder" />
-
-                <TextView
-                    android:id="@+id/icu_urls"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="bottom|start"
-                    android:layout_margin="8dp"
-                    android:padding="6dp"
-                    android:background="@drawable/bg_hud_panel"
-                    android:textColor="@color/icu_text_dim"
-                    android:textSize="11sp"
-                    android:fontFamily="monospace"
-                    android:maxLines="5"
-                    android:visibility="gone" />
             </FrameLayout>
 
             <!-- Right edge: vertical quick-action stack (docked column) -->
@@ -104,8 +104,11 @@
                 android:layout_height="match_parent"
                 android:orientation="vertical"
                 android:gravity="center_vertical"
-                android:background="@drawable/bg_hud_panel"
-                android:padding="6dp">
+                android:background="@color/icu_bg_surface"
+                android:paddingStart="@dimen/icu_space_md"
+                android:paddingEnd="@dimen/icu_space_md"
+                android:paddingTop="@dimen/icu_space_sm"
+                android:paddingBottom="@dimen/icu_space_sm">
 
                 <LinearLayout style="@style/IcuQuickItemVertical">
                     <ImageButton

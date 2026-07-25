@@ -6,6 +6,8 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Matrix;
+import android.graphics.RectF;
 import android.graphics.SurfaceTexture;
 import android.os.Handler;
 import android.os.Looper;
@@ -91,7 +93,6 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
     private TextView    statusText;
     private TextView    destBadge;
-    private TextView    urlsText;
     private TextView    previewHint;
     private TextView    broadcastLabel;
     private View        liveDot;
@@ -117,7 +118,6 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
         statusText      = root.findViewById(R.id.icu_status);
         destBadge       = root.findViewById(R.id.icu_dest_badge);
-        urlsText        = root.findViewById(R.id.icu_urls);
         previewHint     = root.findViewById(R.id.icu_preview_hint);
         broadcastLabel  = root.findViewById(R.id.icu_broadcast_label);
         liveDot         = root.findViewById(R.id.icu_live_dot);
@@ -184,12 +184,47 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         });
     }
 
-    /** Rotate the preview upright. Manual only — no auto-detect (see the icu_rotation
-     *  string-array and rotationIndex/rotationValue below; there is no "Auto" entry). */
+    /** Rotate the preview upright and letterbox it to the source aspect ratio. Manual
+     *  rotation only — no auto-detect (see the icu_rotation string-array and
+     *  rotationIndex/rotationValue below; there is no "Auto" entry).
+     *
+     *  <p>The TextureView fills the pane, so with the default (identity) transform the
+     *  camera frame is stretched to the pane's shape and looks squashed/elongated. We
+     *  build a matrix that rotates the frame and scales it to fit the pane while keeping
+     *  the encoder's source aspect ratio (letterbox), so the preview matches what's
+     *  actually broadcast.</p> */
     private void applyPreviewRotation() {
         if (previewView == null) return;
-        previewView.setRotation(config.rotationDegrees);
         previewView.setScaleX(config.useFrontCamera ? -1f : 1f);   // mirror front camera
+
+        int vw = previewView.getWidth();
+        int vh = previewView.getHeight();
+        if (vw == 0 || vh == 0) {           // not laid out yet — retry after layout
+            previewView.post(this::applyPreviewRotation);
+            return;
+        }
+
+        int deg = ((config.rotationDegrees % 360) + 360) % 360;
+        boolean swap = (deg == 90 || deg == 270);
+        // Source frame dimensions in display orientation (swapped for 90/270).
+        float dispW = swap ? config.resolution.h : config.resolution.w;
+        float dispH = swap ? config.resolution.w : config.resolution.h;
+
+        float cx = vw / 2f, cy = vh / 2f;
+        RectF viewRect = new RectF(0, 0, vw, vh);
+        RectF srcRect  = new RectF(0, 0, dispW, dispH);
+        srcRect.offset(cx - srcRect.centerX(), cy - srcRect.centerY());
+
+        Matrix m = new Matrix();
+        // Undo the default buffer→view stretch, giving square pixels at source aspect...
+        m.setRectToRect(viewRect, srcRect, Matrix.ScaleToFit.FILL);
+        // ...then scale so the frame covers the whole pane (center-crop — max, so the
+        // longer edge fills the pane and the overflow on the other axis is cropped)...
+        float scale = Math.max(vw / dispW, vh / dispH);
+        m.postScale(scale, scale, cx, cy);
+        // ...and rotate upright about the pane centre.
+        m.postRotate(deg, cx, cy);
+        previewView.setTransform(m);
     }
 
     // ── Broadcast ────────────────────────────────────────────────────────────────
@@ -520,25 +555,6 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         if (viewers > 0) s.append(" · ").append(viewers).append(" viewer(s)");
         else if (frames > 0) s.append(" · streaming");
         setStatus(s.toString());
-
-        StringBuilder info = new StringBuilder();
-        if (transports != null) {
-            // Transport status first (incl. RTMP connecting/live/FAILED reason).
-            for (String line : transports.statusLines()) {
-                if (info.length() > 0) info.append("\n");
-                info.append(line);
-            }
-            for (StreamEndpoint ep : transports.allEndpoints()) {
-                if (info.length() > 0) info.append("\n");
-                info.append(ep.protocol).append("  ").append(ep.url);
-            }
-        }
-        if (info.length() > 0) {
-            urlsText.setText(info.toString());
-            urlsText.setVisibility(View.VISIBLE);
-        } else {
-            urlsText.setVisibility(View.GONE);
-        }
     }
 
     private void resetIdleUi() {
@@ -549,7 +565,6 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         broadcastLabel.setText(R.string.icu_broadcast);
         liveDot.setVisibility(View.GONE);
         previewHint.setVisibility(View.VISIBLE);
-        urlsText.setVisibility(View.GONE);
         setStatus(pluginContext.getString(R.string.icu_status_idle));
     }
 
@@ -868,6 +883,17 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         b.setText(current);
         styleInput(ctx, b);
         b.setGravity(android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.START);
+        // Trailing caret so the field visibly reads as a dropdown (not a text field).
+        android.graphics.drawable.Drawable caret = pDrawable(R.drawable.ic_chevron_down);
+        if (caret != null) {
+            caret = caret.mutate();
+            caret.setColorFilter(pColor(R.color.icu_text_secondary),
+                    android.graphics.PorterDuff.Mode.SRC_IN);
+            int sz = dp(ctx, 18);
+            caret.setBounds(0, 0, sz, sz);
+            b.setCompoundDrawables(null, null, caret, null);
+            b.setCompoundDrawablePadding(dp(ctx, 8));
+        }
         parent.addView(b);
         return b;
     }
