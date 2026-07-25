@@ -37,4 +37,11 @@ public class EncoderConfig {
      * background). Default false = keep the screen awake while live.
      */
     public boolean streamWithScreenOff = false;
+
+    /**
+     * How often (seconds) the FOV/video detail is refreshed and force-sent on the self
+     * report while broadcasting. Lower = the wedge tracks the camera sooner on peers, at
+     * the cost of more frequent position reports. Default 3s.
+     */
+    public int fovRefreshSec = 3;
 }

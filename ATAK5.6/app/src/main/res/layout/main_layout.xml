@@ -202,12 +202,6 @@
             android:background="@color/icu_bg_surface"
             android:padding="@dimen/icu_space_md">
 
-            <Button
-                android:id="@+id/icu_settings_blackout"
-                style="@style/Icu.Button.Secondary"
-                android:layout_width="wrap_content"
-                android:text="Blackout" />
-
             <View
                 android:layout_width="0dp"
                 android:layout_height="1dp"

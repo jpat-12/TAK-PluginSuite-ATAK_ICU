@@ -61,6 +61,7 @@ public final class Prefs {
         enc.showStatusWidget = sp.getBoolean("show_status_widget", true);
         enc.streamWithScreenOff = sp.getBoolean("stream_screen_off", false);
         enc.gopSeconds     = sp.getInt("keyframe_sec", 2);
+        enc.fovRefreshSec  = sp.getInt("fov_refresh_sec", 3);
     }
 
     public static void save(Context ctx, MediaServerConfig srv, EncoderConfig enc) {
@@ -86,6 +87,7 @@ public final class Prefs {
                 .putBoolean("show_status_widget", enc.showStatusWidget)
                 .putBoolean("stream_screen_off", enc.streamWithScreenOff)
                 .putInt("keyframe_sec", enc.gopSeconds)
+                .putInt("fov_refresh_sec", enc.fovRefreshSec)
                 .commit();
     }
 

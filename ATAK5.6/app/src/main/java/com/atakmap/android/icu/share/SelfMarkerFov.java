@@ -40,20 +40,26 @@ public final class SelfMarkerFov {
 
     private static final double FOV_DEG = 60, RANGE_M = 15;
     private static final float[] FOV_RGBA = { 0.0f, 0.6f, 1.0f, 0.3f };
-    /** How often the injected FOV/video detail (azimuth) is refreshed for the outbound CoT. */
-    private static final long OUTBOUND_REFRESH_MS = 5000;
     /** How often the local wedge is re-drawn (self marker refreshes clear it faster). */
     private static final long LOCAL_REFRESH_MS = 1000;
+    private static final long DEFAULT_OUTBOUND_MS = 3000;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private volatile boolean active;
     private String url;
     private String alias = "ICU VideoStreamer";
     private String videoUid;
+    /** User-configured FOV refresh/force-send interval; set from EncoderConfig on start. */
+    private long outboundMs = DEFAULT_OUTBOUND_MS;
     private com.atakmap.android.icu.util.CompassHeading compass;
 
     public void start(String videoUrl, String alias) {
+        start(videoUrl, alias, (int) (DEFAULT_OUTBOUND_MS / 1000));
+    }
+
+    public void start(String videoUrl, String alias, int refreshSec) {
         this.url = videoUrl;
+        this.outboundMs = Math.max(1, refreshSec) * 1000L;   // clamp to >= 1s
         String callsign = callsign();
         // Prefer the passed alias; else the operator callsign — never a bare UUID.
         if (alias != null && !alias.trim().isEmpty()) this.alias = alias.trim();
@@ -96,7 +102,9 @@ public final class SelfMarkerFov {
 
     // ── Internals ──────────────────────────────────────────────────────────────
 
-    /** Refresh the detail attached to the outbound self CoT (azimuth) every 10s. */
+    /** Refresh the FOV detail on the outbound self CoT, then force a self report so it
+     *  actually goes out at the configured interval instead of ATAK's throttled self-SA rate
+     *  (up to ~30s when stationary). */
     private final Runnable outboundTick = new Runnable() {
         @Override public void run() {
             if (!active) return;
@@ -108,10 +116,16 @@ public final class SelfMarkerFov {
                     cmc.addAdditionalDetail(KEY_DEVICE, deviceDetail(az));
                     cmc.addAdditionalDetail(KEY_VIDEO, videoDetail());
                 }
+                // Ask ATAK to emit the self report now (setReportAsap) — otherwise the
+                // updated FOV waits for the dynamic/stationary reporting cadence.
+                android.content.Intent report =
+                        new android.content.Intent("com.atakmap.cot.reporting.REPORT_LOCATION");
+                report.putExtra("reason", "ICU FOV update");
+                com.atakmap.android.ipc.AtakBroadcast.getInstance().sendBroadcast(report);
             } catch (Throwable t) {
                 Log.w(TAG, "outbound refresh: " + t.getMessage());
             }
-            handler.postDelayed(this, OUTBOUND_REFRESH_MS);
+            handler.postDelayed(this, outboundMs);
         }
     };
 

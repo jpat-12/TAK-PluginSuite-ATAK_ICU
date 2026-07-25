@@ -143,9 +143,6 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         settingsSaveBtn   = root.findViewById(R.id.icu_settings_save);
         root.findViewById(R.id.icu_settings_back).setOnClickListener(v -> hideSettingsPage());
         root.findViewById(R.id.icu_settings_cancel).setOnClickListener(v -> hideSettingsPage());
-        root.findViewById(R.id.icu_settings_blackout).setOnClickListener(v -> {
-            hideSettingsPage(); showBlackout();
-        });
 
         broadcastButton.setOnClickListener(v -> toggleBroadcast());
         recordButton.setOnClickListener(v -> takeRecord());
@@ -269,7 +266,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     // Put the FOV + playable feed on the operator's own self marker →
                     // renders locally and rides out on the user's own PLI (native sensor +
                     // video handlers). Deterministic URL — a push transport may not be up yet.
-                    sensor.start(advertisedEndpoint().url, serverConfig.alias);
+                    sensor.start(advertisedEndpoint().url, serverConfig.alias, config.fovRefreshSec);
                     // Register the stream on the TAK Server's Video Feed Manager (server DB)
                     // when pushing to a server — makes it discoverable server-side, not just
                     // via the CoT feed on the self marker.
@@ -655,6 +652,10 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             gopBtn.setOnClickListener(x -> picker(ctx, "Keyframe interval", gopOpts,
                     i -> { gopSel[0] = i; gopBtn.setText(gopOpts[i]); }));
 
+            // How often the FOV wedge is refreshed + force-sent to peers (seconds).
+            final EditText fovRefresh = addEdit(ctx, videoCard, "FOV update (sec)",
+                    Integer.toString(config.fovRefreshSec), android.text.InputType.TYPE_CLASS_NUMBER);
+
             // ── Card: Display & power ────────────────────────────────────────────
             final LinearLayout dispCard = addCard(ctx, "DISPLAY & POWER");
             final CharSequence[] widgetOpts = { "On", "Off" };
@@ -737,6 +738,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 config.rotationDegrees = rotationValue(sel[3]);
                 config.useFrontCamera = sel[5] == 1;
                 config.gopSeconds = gopVals[gopSel[0]];
+                config.fovRefreshSec = Math.max(1, intOf(fovRefresh, 3));
                 config.showStatusWidget = widgetSel[0] == 0;
                 config.streamWithScreenOff = screenSel[0] == 1;
 
@@ -788,7 +790,8 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         return Math.round(v * ctx.getResources().getDisplayMetrics().density);
     }
 
-    /** A titled card appended to the settings container; returns its content layout. */
+    /** A titled, <b>collapsible</b> card appended to the settings container; returns the
+     *  content layout callers add fields to. Tapping the header row toggles the content. */
     private LinearLayout addCard(Context ctx, String title) {
         LinearLayout card = new LinearLayout(ctx);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -800,17 +803,52 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         lp.bottomMargin = dp(ctx, 12);
         card.setLayoutParams(lp);
 
+        // Clickable header row (full width): title (fills) + chevron pinned right.
+        LinearLayout headerRow = new LinearLayout(ctx);
+        headerRow.setOrientation(LinearLayout.HORIZONTAL);
+        headerRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        headerRow.setClickable(true);
+        headerRow.setFocusable(true);
+        headerRow.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
         TextView header = new TextView(ctx);
         header.setText(title);
         header.setTextColor(pColor(R.color.icu_accent));
         header.setTextSize(12);
         header.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         header.setLetterSpacing(0.06f);
-        header.setPadding(0, 0, 0, dp(ctx, 6));
-        card.addView(header);
+        header.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        headerRow.addView(header);
+
+        final android.widget.ImageView chevron = new android.widget.ImageView(ctx);
+        int cs = dp(ctx, 24);
+        chevron.setLayoutParams(new LinearLayout.LayoutParams(cs, cs));
+        chevron.setPadding(0, 0, 0, 0);
+        chevron.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        chevron.setColorFilter(pColor(R.color.icu_accent));
+        chevron.setImageDrawable(pDrawable(R.drawable.ic_chevron_up));
+        headerRow.addView(chevron);
+        card.addView(headerRow);
+
+        // Content the caller fills; collapses on header tap.
+        final LinearLayout content = new LinearLayout(ctx);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(0, dp(ctx, 6), 0, 0);
+        card.addView(content);
+
+        View.OnClickListener toggle = v -> {
+            boolean show = content.getVisibility() != View.VISIBLE;
+            content.setVisibility(show ? View.VISIBLE : View.GONE);
+            chevron.setImageDrawable(pDrawable(
+                    show ? R.drawable.ic_chevron_up : R.drawable.ic_chevron_down));
+        };
+        headerRow.setOnClickListener(toggle);
+        chevron.setOnClickListener(toggle);
 
         settingsContainer.addView(card);
-        return card;
+        return content;
     }
 
     private EditText addEdit(Context ctx, LinearLayout parent, String label, String value, int inputType) {
