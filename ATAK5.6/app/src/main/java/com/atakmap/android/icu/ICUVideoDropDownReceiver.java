@@ -615,6 +615,25 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     serverConfig.username, android.text.InputType.TYPE_CLASS_TEXT);
             final EditText pass = addEdit(ctx, srv, ps(R.string.icu_password),
                     serverConfig.password, android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD | android.text.InputType.TYPE_CLASS_TEXT);
+
+            // Show-password toggle for the field above.
+            final android.widget.CheckBox showPass = new android.widget.CheckBox(ctx);
+            showPass.setText("Show password");
+            showPass.setTextColor(pColor(R.color.icu_text_secondary));
+            showPass.setTextSize(13);
+            showPass.setButtonTintList(android.content.res.ColorStateList.valueOf(pColor(R.color.icu_accent)));
+            LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            spLp.topMargin = (int) (4 * ctx.getResources().getDisplayMetrics().density);
+            showPass.setLayoutParams(spLp);
+            showPass.setOnCheckedChangeListener((btn, checked) -> {
+                pass.setInputType(android.text.InputType.TYPE_CLASS_TEXT | (checked
+                        ? android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                        : android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD));
+                pass.setSelection(pass.getText().length());   // keep the cursor at the end
+            });
+            srv.addView(showPass);
+
             broadcastCard.addView(srv);
             srv.setVisibility(sel[0] == 1 ? View.VISIBLE : View.GONE);
 
