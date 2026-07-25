@@ -55,7 +55,7 @@ public final class Prefs {
         try { enc.resolution = EncoderConfig.Resolution.valueOf(res); }
         catch (Exception ignored) { enc.resolution = EncoderConfig.Resolution.P720; }
         enc.fps             = sp.getInt("fps", 30);
-        enc.bitrateKbps     = sp.getInt("bitrate", 2000);
+        enc.bitrateKbps     = sp.getInt("bitrate", 2500);
         enc.useFrontCamera  = sp.getBoolean("front_camera", false);
         enc.rotationDegrees = sp.getInt("rotation", 270);
         enc.showStatusWidget = sp.getBoolean("show_status_widget", true);

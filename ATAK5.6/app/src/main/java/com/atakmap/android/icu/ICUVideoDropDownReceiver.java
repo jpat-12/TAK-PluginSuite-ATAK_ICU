@@ -734,7 +734,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 serverConfig.srtPassphrase = scannedPassphrase[0];
                 config.resolution = EncoderConfig.Resolution.values()[sel[1]];
                 config.fps = intOf(fpsOpts[sel[2]].toString(), 30);
-                config.bitrateKbps = intOf(bitrate, 2000);
+                config.bitrateKbps = intOf(bitrate, 2500);
                 config.rotationDegrees = rotationValue(sel[3]);
                 config.useFrontCamera = sel[5] == 1;
                 config.gopSeconds = gopVals[gopSel[0]];

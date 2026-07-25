@@ -37,6 +37,7 @@ public class H264Encoder {
     private volatile boolean running;
     private java.util.Timer  syncTimer;
     private long             lastKeyMs;   // for keyframe-cadence logging
+    private long             meterStartMs, meteredBytes;   // measured output-bitrate meter
 
     /**
      * Configure and start the encoder.
@@ -60,6 +61,26 @@ public class H264Encoder {
             }
 
             codec = MediaCodec.createEncoderByType(MIME);
+
+            // Enforce the bitrate as a real cap. Without a mode, MediaCodec defaults to VBR,
+            // which treats KEY_BIT_RATE as an average/target and overshoots ~80% on motion —
+            // bad for a metered cellular budget. CBR holds the wire rate near the configured
+            // value. Only requested when the encoder advertises support (else configure fails).
+            try {
+                MediaCodecInfo.EncoderCapabilities ec = codec.getCodecInfo()
+                        .getCapabilitiesForType(MIME).getEncoderCapabilities();
+                if (ec != null && ec.isBitrateModeSupported(
+                        MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)) {
+                    fmt.setInteger(MediaFormat.KEY_BITRATE_MODE,
+                            MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR);
+                    Log.d(TAG, "bitrate mode: CBR @ " + config.bitrateKbps + " kbps");
+                } else {
+                    Log.w(TAG, "CBR unsupported; encoder default (VBR) may overshoot the cap");
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "bitrate mode check failed: " + e.getMessage());
+            }
+
             codec.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
             inputSurface = codec.createInputSurface();
             codec.start();
@@ -145,6 +166,19 @@ public class H264Encoder {
                         byte[] data = new byte[info.size];
                         buf.position(info.offset);
                         buf.get(data);
+
+                        // Measured output bitrate (bits/ms == kbps) — logged every ~5s.
+                        meteredBytes += data.length;
+                        long tMs = android.os.SystemClock.elapsedRealtime();
+                        if (meterStartMs == 0) meterStartMs = tMs;
+                        long win = tMs - meterStartMs;
+                        if (win >= 5000) {
+                            long kbps = (meteredBytes * 8L) / win;
+                            Log.d(TAG, String.format("measured output bitrate: %d kbps (%.2f Mbps)",
+                                    kbps, kbps / 1000.0));
+                            meterStartMs = tMs;
+                            meteredBytes = 0;
+                        }
 
                         boolean isConfig = (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
                         if (isConfig) {

@@ -17,7 +17,7 @@ public class EncoderConfig {
     }
 
     public Resolution resolution  = Resolution.P720;
-    public int        bitrateKbps = 2000;
+    public int        bitrateKbps = 2500;
     public int        fps         = 30;
     public int        gopSeconds  = 2;
     public boolean    useFrontCamera = false;
