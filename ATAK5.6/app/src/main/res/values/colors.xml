@@ -2,6 +2,8 @@
 <resources>
     <color name="icu_accent">#29B6F6</color>       <!-- cyan-blue: primary/active -->
     <color name="icu_accent_dim">#5529B6F6</color>
+    <color name="icu_auth">#CE93D8</color>         <!-- purple: "Using Auth" badge text/stroke -->
+    <color name="icu_auth_dim">#55AB47BC</color>   <!-- purple, semi-transparent: badge fill -->
     <color name="icu_danger">#F44336</color>       <!-- red: recording/live/stop -->
     <color name="icu_on">#4CAF50</color>           <!-- green: connected/ok -->
     <color name="icu_hud">#B3000000</color>        <!-- 70% black HUD panel -->

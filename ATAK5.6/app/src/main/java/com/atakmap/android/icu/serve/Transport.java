@@ -43,4 +43,19 @@ public interface Transport {
 
     /** One-line human-readable status for the pane (e.g. "Server RTMP: live"), or null. */
     String statusLine();
+
+    /**
+     * True when this transport is up and actually authenticated to the server (the server
+     * required credentials and we supplied them). Default false — on-device servers and
+     * anonymous pushes aren't authenticated. Drives the "Using Auth" badge in the pane.
+     */
+    default boolean usingAuth() { return false; }
+
+    /**
+     * Non-null one-line reason when this transport has failed terminally — e.g. the RTSP
+     * publish was rejected for bad credentials — and is therefore NOT delivering to the
+     * server, even though the encoder keeps producing frames. Null while healthy or still
+     * connecting. Lets the pane show the truth instead of a false "LIVE".
+     */
+    default String failureReason() { return null; }
 }
