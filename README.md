@@ -53,3 +53,7 @@ Each platform builds independently — there is no top-level build that produces
 
 - **No shared code between platforms, by design** — see "The key insight" above.
   Don't go looking for a common `core/` module; there isn't one.
+
+## Support
+
+If this project is useful to you, consider [buying me a coffee](https://buymeacoffee.com/jpat).

@@ -1,5 +1,75 @@
-# ATAK working/build directory
-ATAK-Working/
+# ─────────────────────────────────────────────────────────────────────────────
+# Repo-root .gitignore for the TAK Plugin Suite (multi-module: ATAK5.x/, WinTAK/).
+# Patterns use **/ so they apply to every module.
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Build output archives
+# Build output
+build/
+**/build/
+app/build/
+**/app/build/
+dist/
+# Working/build scratch dirs
+ATAK-Working/
+# Packaged plugin archives
 *.zip
+
+# Gradle
+.gradle/
+**/.gradle/
+# NOTE: gradle-wrapper.jar is intentionally tracked — the TAK.gov pipeline needs it
+# to bootstrap the build. Do not ignore **/gradle/wrapper/gradle-wrapper.jar.
+local.properties
+**/local.properties
+*.local.properties
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+
+# Signing / secrets — never commit these
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+android_keystore
+**/android_keystore
+release.properties
+signing.properties
+
+# Environment / credential files
+.env
+.env.*
+*.env
+credentials.json
+token.json
+secrets.properties
+
+# Generated source
+**/app/src/main/gen/
+
+# ProGuard mapping (keep if you need crash symbolication; ignore otherwise)
+**/app/build/proguard-*-mapping.txt
+
+# OS junk
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# TAK devkit — local paths / artifacts only
+.takdev/
+*.aar
+!.takdev/aars/takdevlint.aar
+
+# ATAK SDK main.jar — large (~31 MB), sourced from the local ATAK-CIV SDK per-machine
+main.jar
+**/app/libs/main.jar
+
+# Logs
+*.log

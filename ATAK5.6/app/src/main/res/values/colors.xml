@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="icu_accent">#29B6F6</color>       <!-- cyan-blue: primary/active -->
+    <color name="icu_accent_dim">#5529B6F6</color>
+    <color name="icu_danger">#F44336</color>       <!-- red: recording/live/stop -->
+    <color name="icu_on">#4CAF50</color>           <!-- green: connected/ok -->
+    <color name="icu_hud">#B3000000</color>        <!-- 70% black HUD panel -->
+    <color name="icu_hud_light">#66FFFFFF</color>
+    <color name="icu_button">#33FFFFFF</color>     <!-- translucent button face -->
+    <color name="icu_button_pressed">#59FFFFFF</color>
+    <color name="icu_text">#FFFFFFFF</color>
+    <color name="icu_text_dim">#B0BEC5</color>
+
+    <!-- ── Design tokens (settings redesign) ───────────────────────────────────── -->
+    <!-- Surfaces -->
+    <color name="icu_bg_root">#0E1417</color>
+    <color name="icu_bg_surface">#1A2226</color>
+    <color name="icu_bg_surface_alt">#232D33</color>
+    <color name="icu_bg_input">#131A1E</color>
+    <color name="icu_bg_input_focused">#182228</color>
+    <!-- Borders -->
+    <color name="icu_border">#33FFFFFF</color>
+    <color name="icu_border_focused">#29B6F6</color>
+    <!-- Text -->
+    <color name="icu_text_primary">#FFFFFFFF</color>
+    <color name="icu_text_secondary">#B0BEC5</color>
+    <color name="icu_text_muted">#78909C</color>
+    <color name="icu_text_hint">#546E7A</color>
+    <!-- Accent -->
+    <color name="icu_accent_pressed">#0288D1</color>
+    <!-- Status -->
+    <color name="icu_success">#4CAF50</color>
+    <color name="icu_error">#FF5722</color>
+</resources>

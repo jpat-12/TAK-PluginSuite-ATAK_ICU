@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ICU VideoStreamer operator pane. A FrameLayout root so the Settings page can be
+     pushed as a full-pane overlay (with its own back button) on top of the HUD, rather
+     than shown as a modal dialog. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- ══════════ Operator HUD (home) ══════════ -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:background="@color/icu_bg_root">
+
+        <!-- Header: live status + destination + settings (mirrors the Settings header) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/icu_header_height"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@color/icu_bg_surface"
+            android:paddingStart="@dimen/icu_space_lg"
+            android:paddingEnd="@dimen/icu_space_sm">
+
+            <View
+                android:id="@+id/icu_live_dot"
+                android:layout_width="10dp"
+                android:layout_height="10dp"
+                android:layout_marginEnd="@dimen/icu_space_sm"
+                android:background="@drawable/live_dot"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/icu_status"
+                style="@style/Icu.Text.Title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:text="@string/icu_status_idle" />
+
+            <TextView
+                android:id="@+id/icu_dest_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/icu_space_sm"
+                android:layout_marginEnd="@dimen/icu_space_sm"
+                android:background="@drawable/bg_badge"
+                android:paddingStart="@dimen/icu_space_sm"
+                android:paddingEnd="@dimen/icu_space_sm"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:maxEms="12"
+                android:textColor="@color/icu_accent"
+                android:textStyle="bold"
+                android:textSize="11sp"
+                android:text="LAN" />
+
+            <ImageButton
+                android:id="@+id/icu_settings_button"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:padding="8dp"
+                android:src="@drawable/ic_settings"
+                android:scaleType="fitCenter"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/icu_settings" />
+        </LinearLayout>
+
+        <!-- Body row: video fills remaining space, quick-action rail docked at the right edge -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:id="@+id/icu_preview_container"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@color/icu_bg_root">
+
+                <TextView
+                    android:id="@+id/icu_preview_hint"
+                    style="@style/Icu.Text.Body"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:gravity="center"
+                    android:padding="@dimen/icu_space_lg"
+                    android:textColor="@color/icu_text_muted"
+                    android:text="@string/icu_preview_placeholder" />
+            </FrameLayout>
+
+            <!-- Right edge: vertical quick-action stack (docked column) -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:gravity="center_vertical"
+                android:background="@color/icu_bg_surface"
+                android:paddingStart="@dimen/icu_space_md"
+                android:paddingEnd="@dimen/icu_space_md"
+                android:paddingTop="@dimen/icu_space_sm"
+                android:paddingBottom="@dimen/icu_space_sm">
+
+                <LinearLayout style="@style/IcuQuickItemVertical">
+                    <ImageButton
+                        android:id="@+id/icu_broadcast_button"
+                        style="@style/IcuQuickButton"
+                        android:src="@drawable/ic_broadcast"
+                        android:contentDescription="@string/icu_broadcast" />
+                    <TextView android:id="@+id/icu_broadcast_label" style="@style/IcuQuickLabel"
+                        android:text="@string/icu_broadcast" />
+                </LinearLayout>
+
+                <LinearLayout style="@style/IcuQuickItemVertical">
+                    <ImageButton
+                        android:id="@+id/icu_record_button"
+                        style="@style/IcuQuickButton"
+                        android:src="@drawable/ic_record"
+                        android:contentDescription="@string/icu_record" />
+                    <TextView style="@style/IcuQuickLabel" android:text="@string/icu_record" />
+                </LinearLayout>
+
+                <LinearLayout style="@style/IcuQuickItemVertical" android:layout_marginBottom="0dp">
+                    <ImageButton
+                        android:id="@+id/icu_snapshot_button"
+                        style="@style/IcuQuickButton"
+                        android:src="@drawable/ic_snapshot"
+                        android:contentDescription="@string/icu_snapshot" />
+                    <TextView style="@style/IcuQuickLabel" android:text="@string/icu_snapshot" />
+                </LinearLayout>
+
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- ══════════ Settings page (pushed overlay, hidden by default) ══════════ -->
+    <LinearLayout
+        android:id="@+id/icu_settings_page"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:background="@color/icu_bg_root"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <!-- Header: back + title -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/icu_header_height"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@color/icu_bg_surface"
+            android:paddingStart="@dimen/icu_space_sm"
+            android:paddingEnd="@dimen/icu_space_lg">
+
+            <ImageButton
+                android:id="@+id/icu_settings_back"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:padding="8dp"
+                android:src="@drawable/ic_arrow_back"
+                android:scaleType="fitCenter"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Back" />
+
+            <TextView
+                style="@style/Icu.Text.Title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/icu_space_sm"
+                android:text="Settings" />
+        </LinearLayout>
+
+        <!-- Scrollable content (built programmatically into the container) -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:id="@+id/icu_settings_container"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="@dimen/icu_space_lg" />
+        </ScrollView>
+
+        <!-- Footer: Blackout / Cancel / Save -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@color/icu_bg_surface"
+            android:padding="@dimen/icu_space_md">
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <Button
+                android:id="@+id/icu_settings_cancel"
+                style="@style/Icu.Button.Secondary"
+                android:layout_width="wrap_content"
+                android:layout_marginEnd="@dimen/icu_space_sm"
+                android:text="Cancel" />
+
+            <Button
+                android:id="@+id/icu_settings_save"
+                style="@style/Icu.Button.Primary"
+                android:layout_width="wrap_content"
+                android:text="Save" />
+        </LinearLayout>
+    </LinearLayout>
+
+</FrameLayout>

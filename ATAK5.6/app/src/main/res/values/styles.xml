@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Plugin theme. ATAK styles the inflated pane via PluginLayoutInflater at runtime. -->
+    <style name="ATAKPluginTheme" parent="@android:style/Theme.Holo">
+        <item name="android:buttonStyle">@android:style/Widget.Button</item>
+        <item name="android:imageButtonStyle">@android:style/Widget.Button</item>
+    </style>
+
+    <!-- Quick-bar item: vertical [round button + tiny label] -->
+    <style name="IcuQuickItem">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:gravity">center_horizontal</item>
+    </style>
+
+    <!-- Quick-bar item stacked in the right-edge rail: same [button + label], but
+         spaced vertically instead of weighted horizontally. -->
+    <style name="IcuQuickItemVertical">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:gravity">center_horizontal</item>
+        <item name="android:layout_marginBottom">10dp</item>
+    </style>
+
+    <style name="IcuQuickButton">
+        <item name="android:layout_width">46dp</item>
+        <item name="android:layout_height">46dp</item>
+        <item name="android:padding">10dp</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="android:background">@drawable/bg_hud_button</item>
+    </style>
+
+    <style name="IcuQuickLabel">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">3dp</item>
+        <item name="android:textColor">@color/icu_text_dim</item>
+        <item name="android:textSize">10sp</item>
+    </style>
+
+    <!-- Field label used in the settings dialog. -->
+    <style name="IcuLabel">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">8dp</item>
+        <item name="android:textColor">#B0BEC5</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <!-- ════════ Settings redesign design system ════════
+         NOTE: a dotted style name (Foo.Bar) implies parent "Foo" by convention, so base
+         styles declare parent="" explicitly or AAPT2 fails with "style/Foo not found". -->
+
+    <!-- Text -->
+    <style name="Icu.Text" parent="">
+        <item name="android:textColor">@color/icu_text_primary</item>
+    </style>
+    <style name="Icu.Text.Title">
+        <item name="android:textColor">@color/icu_text_primary</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+    <style name="Icu.Text.SectionHeader">
+        <item name="android:textColor">@color/icu_accent</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.06</item>
+        <item name="android:layout_marginBottom">@dimen/icu_space_sm</item>
+    </style>
+    <style name="Icu.Text.Body">
+        <item name="android:textColor">@color/icu_text_secondary</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+    <style name="Icu.Text.Label">
+        <item name="android:textColor">@color/icu_text_secondary</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:layout_marginTop">@dimen/icu_space_md</item>
+        <item name="android:layout_marginBottom">@dimen/icu_space_xs</item>
+    </style>
+    <style name="Icu.Text.Hint">
+        <item name="android:textColor">@color/icu_text_muted</item>
+        <item name="android:textSize">12sp</item>
+    </style>
+
+    <!-- Card container -->
+    <style name="Icu.Card" parent="">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:background">@drawable/bg_card</item>
+        <item name="android:padding">@dimen/icu_space_lg</item>
+        <item name="android:layout_marginBottom">@dimen/icu_space_md</item>
+    </style>
+
+    <!-- Inputs -->
+    <style name="Icu.Input" parent="">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">@dimen/icu_input_height</item>
+        <item name="android:background">@drawable/bg_input</item>
+        <item name="android:paddingStart">@dimen/icu_space_md</item>
+        <item name="android:paddingEnd">@dimen/icu_space_md</item>
+        <item name="android:textColor">@color/icu_text_primary</item>
+        <item name="android:textColorHint">@color/icu_text_hint</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:singleLine">true</item>
+    </style>
+
+    <!-- Buttons -->
+    <style name="Icu.Button" parent="">
+        <item name="android:layout_height">@dimen/icu_button_height</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingStart">@dimen/icu_space_lg</item>
+        <item name="android:paddingEnd">@dimen/icu_space_lg</item>
+    </style>
+    <style name="Icu.Button.Primary">
+        <item name="android:background">@drawable/bg_button_primary</item>
+        <item name="android:textColor">@color/icu_text_primary</item>
+    </style>
+    <style name="Icu.Button.Secondary">
+        <item name="android:background">@drawable/bg_button_secondary</item>
+        <item name="android:textColor">@color/icu_text_secondary</item>
+    </style>
+
+</resources>
