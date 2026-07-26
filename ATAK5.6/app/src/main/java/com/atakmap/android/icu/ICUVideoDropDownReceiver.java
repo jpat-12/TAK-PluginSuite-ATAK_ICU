@@ -92,7 +92,10 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     private TransportManager transports;
 
     private TextView    statusText;
+    private int         defaultStatusColor;    // status text's normal colour (for reset after errors)
+    private boolean     authFailureHandled;    // guard so a push auth failure auto-stops only once
     private TextView    destBadge;
+    private TextView    authBadge;
     private TextView    previewHint;
     private TextView    broadcastLabel;
     private View        liveDot;
@@ -117,7 +120,9 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         root = PluginLayoutInflater.inflate(pluginContext, R.layout.main_layout, null);
 
         statusText      = root.findViewById(R.id.icu_status);
+        defaultStatusColor = statusText.getCurrentTextColor();
         destBadge       = root.findViewById(R.id.icu_dest_badge);
+        authBadge       = root.findViewById(R.id.icu_auth_badge);
         previewHint     = root.findViewById(R.id.icu_preview_hint);
         broadcastLabel  = root.findViewById(R.id.icu_broadcast_label);
         liveDot         = root.findViewById(R.id.icu_live_dot);
@@ -262,6 +267,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     }
 
     private void startBroadcast() {
+        authFailureHandled = false;
         setStatus("Starting camera…");
         broadcastButton.setEnabled(false);
 
@@ -453,7 +459,9 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
      */
     private StreamEndpoint advertisedEndpoint() {
         if (serverConfig.pushEnabled()) {
-            return new StreamEndpoint(serverConfig.protocolName(), serverConfig.viewUrl());
+            // feedViewUrl embeds user:pass@ + ?tcp so a peer opening the self-marker video
+            // authenticates to the server and uses reliable RTSP-interleaved delivery.
+            return new StreamEndpoint(serverConfig.protocolName(), serverConfig.feedViewUrl());
         }
         return new StreamEndpoint("RTSP",
                 com.atakmap.android.icu.util.NetworkUtils.rtspUrl(
@@ -550,11 +558,40 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     // ── Status UI ────────────────────────────────────────────────────────────────
 
     private void updateLiveStatus(int frames) {
+        if (authFailureHandled) return;   // already auto-stopped; keep the error on screen
+
+        // A server push that failed (e.g. bad credentials) isn't reaching anyone, even
+        // though the encoder keeps producing frames — so stop the broadcast outright
+        // instead of showing a false "LIVE".
+        String failure = (transports != null) ? transports.failureReason() : null;
+        if (failure != null) { handlePushFailure(failure); return; }
+
         int viewers = (transports != null) ? transports.totalViewers() : 0;
         StringBuilder s = new StringBuilder("LIVE · ").append(config.resolution.label);
         if (viewers > 0) s.append(" · ").append(viewers).append(" viewer(s)");
         else if (frames > 0) s.append(" · streaming");
         setStatus(s.toString());
+        liveDot.setVisibility(View.VISIBLE);
+        refreshAuthBadge();
+    }
+
+    /** A server push failed terminally (typically bad credentials): tear the broadcast down
+     *  — encoder, transports, self-marker feed, and the on-map "live" widget — and show the
+     *  reason in red. Runs once per broadcast (guarded by authFailureHandled). */
+    private void handlePushFailure(String reason) {
+        authFailureHandled = true;
+        boolean auth = reason != null && reason.toLowerCase().contains("auth");
+        stopBroadcast();   // stops capture + transports + widget and resets the pane to idle…
+        setStatusError(auth ? "AUTHENTICATION FAILED" : reason);   // …then show the reason in red
+    }
+
+    /** Show the purple "Using Auth" badge only when a live transport is actually
+     *  authenticated to its server — the system check for "is this stream using user/pass".
+     *  Anonymous publishes and on-device serving leave it hidden. */
+    private void refreshAuthBadge() {
+        if (authBadge == null) return;
+        boolean auth = transports != null && transports.usingAuth();
+        authBadge.setVisibility(auth ? View.VISIBLE : View.GONE);
     }
 
     private void resetIdleUi() {
@@ -565,6 +602,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         broadcastLabel.setText(R.string.icu_broadcast);
         liveDot.setVisibility(View.GONE);
         previewHint.setVisibility(View.VISIBLE);
+        if (authBadge != null) authBadge.setVisibility(View.GONE);
         setStatus(pluginContext.getString(R.string.icu_status_idle));
     }
 
@@ -573,7 +611,20 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 ? "SERVER → " + serverConfig.host : "LAN");
     }
 
-    private void setStatus(String text) { if (statusText != null) statusText.setText(text); }
+    private void setStatus(String text) {
+        if (statusText != null) {
+            statusText.setTextColor(defaultStatusColor);
+            statusText.setText(text);
+        }
+    }
+
+    /** Set the status line in red (e.g. "AUTHENTICATION FAILED"). */
+    private void setStatusError(String text) {
+        if (statusText != null) {
+            statusText.setTextColor(0xFFF44336);   // icu_danger red
+            statusText.setText(text);
+        }
+    }
 
     // ── Settings dialog (gear) ───────────────────────────────────────────────────
 

@@ -80,6 +80,23 @@ public class TransportManager implements CapturePipeline.Sink {
         return out;
     }
 
+    /** True when any active transport is authenticated to its server (drives the pane's
+     *  "Using Auth" badge). False for on-device serving and anonymous pushes. */
+    public boolean usingAuth() {
+        for (Transport t : transports) if (t.usingAuth()) return true;
+        return false;
+    }
+
+    /** First terminal failure reason among transports (e.g. RTSP publish auth rejected),
+     *  or null if none have failed. Lets the pane replace a false "LIVE" with the reason. */
+    public String failureReason() {
+        for (Transport t : transports) {
+            String r = t.failureReason();
+            if (r != null) return r;
+        }
+        return null;
+    }
+
     public int totalViewers() {
         int sum = 0;
         for (Transport t : transports) {

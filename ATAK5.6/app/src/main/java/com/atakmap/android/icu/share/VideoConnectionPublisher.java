@@ -54,7 +54,8 @@ public final class VideoConnectionPublisher {
 
                 ConnectionEntry ce = new ConnectionEntry(
                         cfg.alias == null || cfg.alias.trim().isEmpty() ? "ICU VideoStreamer" : cfg.alias.trim(),
-                        cfg.viewUrl());          // 2-arg ctor parses address/port/path/protocol
+                        cfg.feedViewUrl());      // 2-arg ctor parses address/port/path/protocol;
+                                                 // feedViewUrl embeds user:pass@ + ?tcp for viewers
                 ce.setUID(uuid);
 
                 // serialize() emits the server's <videoConnections><feed>… schema but has no

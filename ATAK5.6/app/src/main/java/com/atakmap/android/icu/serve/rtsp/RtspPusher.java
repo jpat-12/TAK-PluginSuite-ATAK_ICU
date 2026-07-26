@@ -51,6 +51,8 @@ public class RtspPusher {
     private byte[] sps, pps;
     private int rtpChannel = 0;          // interleaved RTP channel negotiated in SETUP
     private boolean sendErrLogged;       // throttle the "broken pipe" spam to one line
+    private volatile boolean streaming;  // true after RECORD; gates the drain loop
+    private Thread drainThread;          // reads/discards the server's inbound RTCP + keepalives
 
     public RtspPusher(String host, int port, String path, String user, String pass) {
         this.host = host;
@@ -99,24 +101,70 @@ public class RtspPusher {
                         : "authentication failed — check username/password");
         }
         Log.d(TAG, "ANNOUNCE -> " + announce.code + (digest ? " (digest)" : authHeader != null ? " (basic)" : ""));
-        if (announce.code != 200) throw new IOException("ANNOUNCE failed: " + announce.code);
+        if (announce.code != 200) { logFail("ANNOUNCE", announce); throw new IOException("ANNOUNCE failed: " + announce.code); }
 
         Resp setup = request("SETUP", baseUrl + "/trackID=0",
                 "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n", null);
         Log.d(TAG, "SETUP -> " + setup.code + " transport=" + transportLine(setup.headers));
-        if (setup.code != 200) throw new IOException("SETUP failed: " + setup.code);
+        if (setup.code != 200) { logFail("SETUP", setup); throw new IOException("SETUP failed: " + setup.code); }
         session = parseSession(setup.headers);
         rtpChannel = parseRtpChannel(setup.headers);   // honor the server's negotiated channel
 
         Resp record = request("RECORD", baseUrl, "Range: npt=0.000-\r\n", null);
         Log.d(TAG, "RECORD -> " + record.code);
-        if (record.code != 200) throw new IOException("RECORD failed: " + record.code);
+        if (record.code != 200) { logFail("RECORD", record); throw new IOException("RECORD failed: " + record.code); }
+        streaming = true;
+        startDrain();   // keep the socket read side drained so the server's writes don't back up
         Log.d(TAG, "RTSP publishing → " + baseUrl + " (session " + session + ", rtpChannel " + rtpChannel + ")");
     }
 
+    /**
+     * After RECORD the server keeps sending on the same TCP connection — interleaved RTCP
+     * receiver reports and periodic keepalives. If we never read them, its send buffer fills
+     * and (with the server's writeTimeout) gortsplib eventually fails to write and drops the
+     * publish, which surfaces here as a "Broken pipe". Draining the read side prevents that;
+     * we don't need the contents, just to keep the pipe clear.
+     */
+    private void startDrain() {
+        drainThread = new Thread(() -> {
+            byte[] buf = new byte[4096];
+            try {
+                while (streaming) {
+                    int n = inRaw.read(buf);
+                    if (n < 0) break;   // server closed the connection
+                }
+            } catch (IOException ignored) {
+                // socket closed on teardown, or the server dropped us — nothing to do
+            }
+        }, "ICU-RtspDrain");
+        drainThread.setDaemon(true);
+        drainThread.start();
+    }
+
+    /** Log the server's full reply (status line + body + headers) for a failed handshake
+     *  step. A MediaMTX 400 with body "path '…' is not configured" means the server has no
+     *  path rule for the stream name — a server-config issue, not a client bug. */
+    private void logFail(String verb, Resp r) {
+        Log.w(TAG, verb + " rejected: '" + r.status + "'"
+                + (r.body.isEmpty() ? "" : " body=[" + r.body.trim() + "]")
+                + " reqUri=" + baseUrl
+                + " headers=[" + r.headers.replace("\r\n", " | ").trim() + "]");
+    }
+
+    /** True once the server challenged with 401 and we applied Basic/Digest credentials —
+     *  i.e. this publish is actually authenticated (not anonymous). Drives the UI badge. */
+    public boolean usedAuth() { return digest || authHeader != null; }
+
     public void close() {
-        try { if (session != null) request("TEARDOWN", baseUrl, null, null); } catch (Exception ignored) {}
+        streaming = false;
+        // Closing the socket unblocks the drain thread's read and signals EOF to the server,
+        // which destroys the session. (A formal TEARDOWN would race the drain reader for its
+        // response, so we rely on the disconnect instead — gortsplib handles EOF cleanly.)
         try { if (socket != null) socket.close(); } catch (Exception ignored) {}
+        if (drainThread != null) {
+            try { drainThread.join(300); } catch (InterruptedException ignored) {}
+            drainThread = null;
+        }
         socket = null;
     }
 
@@ -188,7 +236,7 @@ public class RtspPusher {
 
     // ── RTSP request/response ─────────────────────────────────────────────────
 
-    private static final class Resp { int code; String headers = ""; }
+    private static final class Resp { int code; String status = ""; String headers = ""; String body = ""; }
 
     private synchronized Resp request(String method, String url, String extraHeaders, String body)
             throws IOException {
@@ -212,6 +260,7 @@ public class RtspPusher {
         String status = in.readLine();
         if (status == null) throw new IOException("connection closed");
         // "RTSP/1.0 200 OK"
+        resp.status = status;
         String[] parts = status.split(" ");
         resp.code = (parts.length >= 2) ? parseInt(parts[1]) : 0;
         StringBuilder h = new StringBuilder();
@@ -222,7 +271,9 @@ public class RtspPusher {
                 contentLength = parseInt(line.substring(15).trim());
         }
         resp.headers = h.toString();
-        for (int i = 0; i < contentLength; i++) in.read(); // drain any body
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < contentLength; i++) { int c = in.read(); if (c >= 0) b.append((char) c); }
+        resp.body = b.toString();   // captured so logFail() can show the server's reason
         return resp;
     }
 

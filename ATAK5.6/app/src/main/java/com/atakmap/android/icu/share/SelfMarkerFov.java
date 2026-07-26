@@ -179,12 +179,16 @@ public final class SelfMarkerFov {
 
         String address = "", path = "", protocol = "rtsp";
         int port = 8554;
+        boolean tcp = false;
         try {
             URI u = URI.create(url);
             if (u.getScheme() != null) protocol = u.getScheme().toLowerCase();
-            if (u.getHost() != null)   address  = u.getHost();
+            // Keep the userinfo in the address (user:pass@host) so the viewer authenticates.
+            if (u.getHost() != null)
+                address = (u.getUserInfo() != null ? u.getUserInfo() + "@" : "") + u.getHost();
             if (u.getPort() > 0)       port     = u.getPort();
             if (u.getPath() != null)   path     = u.getPath();
+            tcp = "tcp".equalsIgnoreCase(u.getQuery());   // ?tcp → reliable RTSP-interleaved
         } catch (Exception ignored) {}
 
         CotDetail ce = new CotDetail("ConnectionEntry");
@@ -197,7 +201,7 @@ public final class SelfMarkerFov {
         ce.setAttribute("protocol", protocol);
         ce.setAttribute("networkTimeout", "5000");
         ce.setAttribute("bufferTime", "-1");
-        ce.setAttribute("rtspReliable", "0");
+        ce.setAttribute("rtspReliable", tcp ? "1" : "0");
         ce.setAttribute("ignoreEmbeddedKLV", "false");
         video.addChild(ce);
         return video;

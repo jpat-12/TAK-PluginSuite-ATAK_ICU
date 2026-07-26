@@ -19,6 +19,7 @@ public class RtspPushTransport implements Transport {
     private RtspPusher pusher;
     private volatile boolean handshaking, up;
     private volatile String state = "idle";
+    private volatile String failReason;   // non-null once the publish handshake fails
 
     public RtspPushTransport(MediaServerConfig server) { this.server = server; }
 
@@ -44,6 +45,7 @@ public class RtspPushTransport implements Transport {
 
         final byte[] s = sps.clone(), p = pps.clone();
         state = "connecting…";
+        failReason = null;
         new Thread(() -> {
             try {
                 pusher = new RtspPusher(fHost, server.serverPort, server.streamPath,
@@ -54,6 +56,7 @@ public class RtspPushTransport implements Transport {
                 Log.d(TAG, "RTSP publish established");
             } catch (Exception e) {
                 up = false;
+                failReason = e.getMessage();
                 state = "FAILED: " + e.getMessage();
                 Log.w(TAG, "RTSP publish failed: " + e.getMessage(), e);
             }
@@ -68,7 +71,7 @@ public class RtspPushTransport implements Transport {
 
     @Override
     public void stop() {
-        up = false; handshaking = false; state = "idle";
+        up = false; handshaking = false; state = "idle"; failReason = null;
         if (pusher != null) { pusher.close(); pusher = null; }
     }
 
@@ -81,6 +84,15 @@ public class RtspPushTransport implements Transport {
     }
 
     @Override public int viewerCount() { return -1; }
+
+    @Override
+    public boolean usingAuth() {
+        RtspPusher p = pusher;
+        return up && p != null && p.usedAuth();
+    }
+
+    @Override
+    public String failureReason() { return failReason; }
 
     @Override
     public String statusLine() {

@@ -43,6 +43,23 @@
                 android:text="@string/icu_status_idle" />
 
             <TextView
+                android:id="@+id/icu_auth_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/icu_space_sm"
+                android:background="@drawable/bg_badge_auth"
+                android:paddingStart="@dimen/icu_space_sm"
+                android:paddingEnd="@dimen/icu_space_sm"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:singleLine="true"
+                android:textColor="@color/icu_auth"
+                android:textStyle="bold"
+                android:textSize="11sp"
+                android:text="Using Auth"
+                android:visibility="gone" />
+
+            <TextView
                 android:id="@+id/icu_dest_badge"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

@@ -64,6 +64,30 @@ public class MediaServerConfig {
         }
     }
 
+    /**
+     * The URL published to the TAK Server Video Feed Manager for <b>viewers</b>. Unlike
+     * {@link #viewUrl()}, this embeds credentials as RFC 3986 userinfo and (for RTSP) the
+     * ATAK {@code ?tcp} transport hint — matching the TAK ConnectionEntry format ATAK's
+     * video player expects, e.g. {@code rtsp://user:pass@host:8554/path?tcp}. A viewer
+     * needs the credentials inline because MediaMTX also requires auth to read, and
+     * {@code ?tcp} forces reliable RTSP-interleaved delivery instead of UDP.
+     */
+    public String feedViewUrl() {
+        String creds = userInfo();
+        switch (pushProtocol) {
+            case RTSP: return "rtsp://" + creds + host + ":" + serverPort + "/" + streamPath + "?tcp";
+            case SRT:  return "srt://"  + host + ":" + serverPort + "?streamid=read:" + streamPath;
+            default:   return "rtmp://" + creds + host + ":" + serverPort + "/" + streamPath;
+        }
+    }
+
+    /** Credentials as URL userinfo ({@code user:pass@}) or {@code ""} when no username is
+     *  set. Shown verbatim (no percent-encoding) to match the TAK ConnectionEntry format. */
+    public String userInfo() {
+        if (username == null || username.trim().isEmpty()) return "";
+        return username.trim() + ":" + (password == null ? "" : password) + "@";
+    }
+
     public String protocolName() { return pushProtocol.name(); }
 
     /** True only when the destination is SERVER and an address is set. */
