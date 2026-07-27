@@ -54,6 +54,15 @@ public class RtspPusher {
     private volatile boolean streaming;  // true after RECORD; gates the drain loop
     private Thread drainThread;          // reads/discards the server's inbound RTCP + keepalives
 
+    // ── Optional second track: AAC audio (RFC 3640 mpeg4-generic) ──
+    private boolean hasAudio;
+    private byte[]  audioAsc;            // AudioSpecificConfig
+    private int     audioRate = 44100, audioChannels = 1;
+    private int     audioRtpChannel = 2;                 // interleaved channel from audio SETUP
+    private int     audioSeq;
+    private final int audioSsrc = new Random().nextInt();
+    private static final int PT_VIDEO = 96, PT_AUDIO = 97;
+
     public RtspPusher(String host, int port, String path, String user, String pass) {
         this.host = host;
         this.port = port;
@@ -61,6 +70,16 @@ public class RtspPusher {
         this.user = user;
         this.pass = pass;
         this.baseUrl = "rtsp://" + host + ":" + port + "/" + this.path;
+    }
+
+    /** Enable an AAC audio track. Must be called before {@link #publish} (the SDP is built
+     *  once during the handshake). */
+    public void setAudio(byte[] asc, int sampleRate, int channels) {
+        if (asc == null || asc.length == 0) return;
+        this.hasAudio = true;
+        this.audioAsc = asc.clone();
+        this.audioRate = sampleRate;
+        this.audioChannels = channels;
     }
 
     // ── Publish handshake ────────────────────────────────────────────────────
@@ -109,6 +128,22 @@ public class RtspPusher {
         if (setup.code != 200) { logFail("SETUP", setup); throw new IOException("SETUP failed: " + setup.code); }
         session = parseSession(setup.headers);
         rtpChannel = parseRtpChannel(setup.headers);   // honor the server's negotiated channel
+
+        if (hasAudio) {
+            // Second track: interleaved RTP/RTCP on channels 2-3. The Session from the video
+            // SETUP is carried automatically (aggregate control), so both tracks share it.
+            Resp aSetup = request("SETUP", baseUrl + "/trackID=1",
+                    "Transport: RTP/AVP/TCP;unicast;interleaved=2-3;mode=record\r\n", null);
+            Log.d(TAG, "SETUP audio -> " + aSetup.code + " transport=" + transportLine(aSetup.headers));
+            if (aSetup.code != 200) {
+                // Non-fatal: fall back to video-only rather than aborting the whole publish.
+                logFail("SETUP audio", aSetup);
+                hasAudio = false;
+            } else {
+                audioRtpChannel = parseRtpChannel(aSetup.headers);
+                if (audioRtpChannel == 0) audioRtpChannel = 2;   // default if server didn't echo
+            }
+        }
 
         Resp record = request("RECORD", baseUrl, "Range: npt=0.000-\r\n", null);
         Log.d(TAG, "RECORD -> " + record.code);
@@ -191,7 +226,7 @@ public class RtspPusher {
 
     private void sendRtp(byte[] nal, boolean marker, long ts) throws IOException {
         if (nal.length <= 1400) {
-            writeInterleaved(buildRtp(nal, 0, nal.length, marker, ts));
+            writeInterleaved(rtpChannel, buildRtp(nal, 0, nal.length, marker, ts, PT_VIDEO, seq++, ssrc));
         } else {
             // FU-A fragmentation
             byte nalHeader = nal[0];
@@ -207,27 +242,50 @@ public class RtspPusher {
                 byte[] payload = new byte[2 + chunk];
                 payload[0] = fuInd; payload[1] = fuHdr;
                 System.arraycopy(nal, pos, payload, 2, chunk);
-                writeInterleaved(buildRtp(payload, 0, payload.length, last && marker, ts));
+                writeInterleaved(rtpChannel, buildRtp(payload, 0, payload.length, last && marker, ts, PT_VIDEO, seq++, ssrc));
                 first = false; pos += chunk;
             }
         }
     }
 
-    private byte[] buildRtp(byte[] d, int off, int len, boolean marker, long ts) {
+    /** Send one AAC access unit as an RFC 3640 (mpeg4-generic, AAC-hbr) RTP packet. Sent over
+     *  TCP interleaved, so a whole frame fits in one packet — no fragmentation needed. */
+    public void sendAudioSample(byte[] aac, long ptsUs) {
+        if (out == null || !hasAudio || aac == null || aac.length == 0) return;
+        long ts = ptsUs * audioRate / 1_000_000L;   // RTP audio clock = sample rate
+        // AU-headers-length (16 bits) + one AU-header: 13-bit size, 3-bit index(0).
+        byte[] payload = new byte[4 + aac.length];
+        payload[0] = 0x00; payload[1] = 0x10;                     // AU-headers-length = 16 bits
+        int hdr = (aac.length & 0x1FFF) << 3;                     // size<<3 | index(0)
+        payload[2] = (byte) (hdr >> 8); payload[3] = (byte) hdr;
+        System.arraycopy(aac, 0, payload, 4, aac.length);
+        try {
+            writeInterleaved(audioRtpChannel,
+                    buildRtp(payload, 0, payload.length, true, ts, PT_AUDIO, audioSeq++, audioSsrc));
+        } catch (IOException e) {
+            if (!sendErrLogged) {
+                sendErrLogged = true;
+                Log.w(TAG, "sendAudio failed (" + e.getMessage() + ")");
+            }
+        }
+    }
+
+    private byte[] buildRtp(byte[] d, int off, int len, boolean marker, long ts,
+                            int payloadType, int seqNum, int ssrcId) {
         byte[] p = new byte[12 + len];
-        int s = seq++ & 0xFFFF;
+        int s = seqNum & 0xFFFF;
         p[0] = (byte) 0x80;
-        p[1] = (byte) ((marker ? 0x80 : 0) | 96);
+        p[1] = (byte) ((marker ? 0x80 : 0) | payloadType);
         p[2] = (byte) (s >> 8); p[3] = (byte) s;
         p[4] = (byte) (ts >> 24); p[5] = (byte) (ts >> 16); p[6] = (byte) (ts >> 8); p[7] = (byte) ts;
-        p[8] = (byte) (ssrc >> 24); p[9] = (byte) (ssrc >> 16); p[10] = (byte) (ssrc >> 8); p[11] = (byte) ssrc;
+        p[8] = (byte) (ssrcId >> 24); p[9] = (byte) (ssrcId >> 16); p[10] = (byte) (ssrcId >> 8); p[11] = (byte) ssrcId;
         System.arraycopy(d, off, p, 12, len);
         return p;
     }
 
-    private synchronized void writeInterleaved(byte[] rtp) throws IOException {
+    private synchronized void writeInterleaved(int channel, byte[] rtp) throws IOException {
         out.write(0x24);          // '$'
-        out.write(rtpChannel);    // negotiated RTP interleaved channel
+        out.write(channel);       // negotiated RTP interleaved channel (video or audio)
         out.write((rtp.length >> 8) & 0xFF);
         out.write(rtp.length & 0xFF);
         out.write(rtp);
@@ -381,15 +439,28 @@ public class RtspPusher {
     private String buildSdp() {
         String spsB64 = Base64.encodeToString(sps, Base64.NO_WRAP);
         String ppsB64 = Base64.encodeToString(pps, Base64.NO_WRAP);
-        return "v=0\r\n" +
-               "o=- 0 0 IN IP4 127.0.0.1\r\n" +
-               "s=ICU VideoStreamer\r\n" +
-               "c=IN IP4 0.0.0.0\r\n" +
-               "t=0 0\r\n" +
-               "m=video 0 RTP/AVP 96\r\n" +
-               "a=rtpmap:96 H264/90000\r\n" +
-               "a=fmtp:96 packetization-mode=1;sprop-parameter-sets=" + spsB64 + "," + ppsB64 + "\r\n" +
-               "a=control:trackID=0\r\n";
+        StringBuilder sdp = new StringBuilder()
+               .append("v=0\r\n")
+               .append("o=- 0 0 IN IP4 127.0.0.1\r\n")
+               .append("s=ICU VideoStreamer\r\n")
+               .append("c=IN IP4 0.0.0.0\r\n")
+               .append("t=0 0\r\n")
+               .append("m=video 0 RTP/AVP ").append(PT_VIDEO).append("\r\n")
+               .append("a=rtpmap:").append(PT_VIDEO).append(" H264/90000\r\n")
+               .append("a=fmtp:").append(PT_VIDEO)
+               .append(" packetization-mode=1;sprop-parameter-sets=").append(spsB64).append(",").append(ppsB64).append("\r\n")
+               .append("a=control:trackID=0\r\n");
+        if (hasAudio) {
+            // RFC 3640 mpeg4-generic (AAC-hbr). config = the AudioSpecificConfig as hex.
+            sdp.append("m=audio 0 RTP/AVP ").append(PT_AUDIO).append("\r\n")
+               .append("a=rtpmap:").append(PT_AUDIO).append(" mpeg4-generic/")
+               .append(audioRate).append("/").append(audioChannels).append("\r\n")
+               .append("a=fmtp:").append(PT_AUDIO)
+               .append(" streamtype=5;profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3;config=")
+               .append(hex(audioAsc)).append("\r\n")
+               .append("a=control:trackID=1\r\n");
+        }
+        return sdp.toString();
     }
 
     private static byte[] strip(byte[] d) {

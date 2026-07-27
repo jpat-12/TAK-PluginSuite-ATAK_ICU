@@ -33,6 +33,12 @@ public interface Transport {
     /** One encoded NAL unit (Annex-B, with start code). */
     void onNal(byte[] data, boolean keyFrame, long ptsUs);
 
+    /** AAC AudioSpecificConfig for the optional audio track (transports without audio ignore). */
+    default void onAudioFormat(byte[] asc, int sampleRate, int channels) {}
+
+    /** One raw AAC access unit with its presentation time (microseconds). */
+    default void onAudioSample(byte[] aac, long ptsUs) {}
+
     void stop();
 
     /** URL(s) viewers can use for this transport. May be empty until started. */
