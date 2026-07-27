@@ -38,7 +38,8 @@ public final class SelfMarkerFov {
     private static final String KEY_VIDEO  = "__icu_video";
     private static final String KEY_DEVICE = "__icu_device";
 
-    private static final double FOV_DEG = 60, RANGE_M = 15;
+    private static final double FOV_DEG = 60;
+    private static final double DEFAULT_RANGE_M = 100;
     private static final float[] FOV_RGBA = { 0.0f, 0.6f, 1.0f, 0.3f };
     /** How often the local wedge is re-drawn (self marker refreshes clear it faster). */
     private static final long LOCAL_REFRESH_MS = 1000;
@@ -51,15 +52,18 @@ public final class SelfMarkerFov {
     private String videoUid;
     /** User-configured FOV refresh/force-send interval; set from EncoderConfig on start. */
     private long outboundMs = DEFAULT_OUTBOUND_MS;
+    /** User-configured FOV wedge reach (meters); set from EncoderConfig on start. */
+    private double rangeM = DEFAULT_RANGE_M;
     private com.atakmap.android.icu.util.CompassHeading compass;
 
     public void start(String videoUrl, String alias) {
-        start(videoUrl, alias, (int) (DEFAULT_OUTBOUND_MS / 1000));
+        start(videoUrl, alias, (int) (DEFAULT_OUTBOUND_MS / 1000), (int) DEFAULT_RANGE_M);
     }
 
-    public void start(String videoUrl, String alias, int refreshSec) {
+    public void start(String videoUrl, String alias, int refreshSec, int rangeMeters) {
         this.url = videoUrl;
         this.outboundMs = Math.max(1, refreshSec) * 1000L;   // clamp to >= 1s
+        this.rangeM = Math.max(1, rangeMeters);              // clamp to >= 1m
         String callsign = callsign();
         // Prefer the passed alias; else the operator callsign — never a bare UUID.
         if (alias != null && !alias.trim().isEmpty()) this.alias = alias.trim();
@@ -148,7 +152,7 @@ public final class SelfMarkerFov {
         s.setAttribute("elevation", "0");
         s.setAttribute("vfov", "0");
         s.setAttribute("roll", "0");
-        s.setAttribute("range", Long.toString(Math.round(RANGE_M)));
+        s.setAttribute("range", Long.toString(Math.round(rangeM)));
         s.setAttribute("azimuth", Long.toString(Math.round(az)));
         s.setAttribute("fov", Long.toString(Math.round(FOV_DEG)));
         s.setAttribute("fovRed", "0.0");
@@ -212,7 +216,7 @@ public final class SelfMarkerFov {
         if (self == null) return;
         // Last arg = true: the 6-arg overload's boolean is passed straight into ATAK's
         // internal addFovToMap; false was leaving the wedge created-but-invisible.
-        SensorDetailHandler.addFovToMap(self, az, FOV_DEG, RANGE_M, FOV_RGBA, true);
+        SensorDetailHandler.addFovToMap(self, az, FOV_DEG, rangeM, FOV_RGBA, true);
         if (!loggedPoint) {
             loggedPoint = true;
             com.atakmap.coremap.maps.coords.GeoPoint p = self.getPoint();

@@ -307,7 +307,8 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     // Put the FOV + playable feed on the operator's own self marker →
                     // renders locally and rides out on the user's own PLI (native sensor +
                     // video handlers). Deterministic URL — a push transport may not be up yet.
-                    sensor.start(advertisedEndpoint().url, serverConfig.alias, config.fovRefreshSec);
+                    sensor.start(advertisedEndpoint().url, serverConfig.alias,
+                            config.fovRefreshSec, config.fovRangeM);
                     // Register the stream on the TAK Server's Video Feed Manager (server DB)
                     // when pushing to a server — makes it discoverable server-side, not just
                     // via the CoT feed on the self marker.
@@ -722,6 +723,10 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             final EditText fovRefresh = addEdit(ctx, videoCard, "FOV update (sec)",
                     Integer.toString(config.fovRefreshSec), android.text.InputType.TYPE_CLASS_NUMBER);
 
+            // How far the FOV wedge reaches on peers' maps (meters).
+            final EditText fovRange = addEdit(ctx, videoCard, "FOV range (m)",
+                    Integer.toString(config.fovRangeM), android.text.InputType.TYPE_CLASS_NUMBER);
+
             // ── Card: Display & power ────────────────────────────────────────────
             final LinearLayout dispCard = addCard(ctx, "DISPLAY & POWER");
             final CharSequence[] widgetOpts = { "On", "Off" };
@@ -805,6 +810,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 config.useFrontCamera = sel[5] == 1;
                 config.gopSeconds = gopVals[gopSel[0]];
                 config.fovRefreshSec = Math.max(1, intOf(fovRefresh, 3));
+                config.fovRangeM = Math.max(1, intOf(fovRange, 100));
                 config.showStatusWidget = widgetSel[0] == 0;
                 config.streamWithScreenOff = screenSel[0] == 1;
 

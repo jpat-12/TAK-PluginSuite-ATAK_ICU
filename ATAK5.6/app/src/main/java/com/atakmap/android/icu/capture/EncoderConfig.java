@@ -44,4 +44,10 @@ public class EncoderConfig {
      * the cost of more frequent position reports. Default 3s.
      */
     public int fovRefreshSec = 3;
+
+    /**
+     * How far (meters) the broadcast FOV wedge extends from the operator's marker. Purely
+     * a visual reach for the wedge on peers' maps; does not affect the video. Default 100m.
+     */
+    public int fovRangeM = 100;
 }
