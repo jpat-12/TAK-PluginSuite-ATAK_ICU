@@ -211,10 +211,13 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         }
 
         int deg = ((config.rotationDegrees % 360) + 360) % 360;
-        boolean swap = (deg == 90 || deg == 270);
-        // Source frame dimensions in display orientation (swapped for 90/270).
-        float dispW = swap ? config.resolution.h : config.resolution.w;
-        float dispH = swap ? config.resolution.w : config.resolution.h;
+        // Match the encoder/stream: the camera's SurfaceTexture bakes in the 90° sensor
+        // orientation, so the upright frame is PORTRAIT for 0°/180° and LANDSCAPE for
+        // 90°/270°. Use the same swap the encoder uses so the preview aspect matches the
+        // stream (otherwise portrait looks distorted here but not on the wire).
+        boolean swap = (deg == 0 || deg == 180);
+        float dispW = swap ? config.captureH : config.captureW;
+        float dispH = swap ? config.captureW : config.captureH;
 
         float cx = vw / 2f, cy = vh / 2f;
         RectF viewRect = new RectF(0, 0, vw, vh);
@@ -224,9 +227,9 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         Matrix m = new Matrix();
         // Undo the default buffer→view stretch, giving square pixels at source aspect...
         m.setRectToRect(viewRect, srcRect, Matrix.ScaleToFit.FILL);
-        // ...then scale so the frame covers the whole pane (center-crop — max, so the
-        // longer edge fills the pane and the overflow on the other axis is cropped)...
-        float scale = Math.max(vw / dispW, vh / dispH);
+        // ...then fit the whole frame inside the pane (min = letterbox, so the operator
+        // sees the FULL camera view — same framing that's broadcast — not a cropped zoom)...
+        float scale = Math.min(vw / dispW, vh / dispH);
         m.postScale(scale, scale, cx, cy);
         // ...and rotate upright about the pane centre.
         m.postRotate(deg, cx, cy);

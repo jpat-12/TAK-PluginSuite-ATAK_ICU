@@ -47,15 +47,19 @@ public class H264Encoder {
      */
     public Surface start(EncoderConfig config, Callback callback) {
         try {
-            // A 90°/270° rotation makes the encoded frame portrait, so swap the encoder
-            // dimensions to match. The GL rotation stage (GlRotationPipe) actually rotates
-            // the pixels into this surface — KEY_ROTATION is only metadata that raw H.264
-            // over RTSP ignores, which is why it never changed the stream before.
+            // The camera's SurfaceTexture matrix bakes in the 90° sensor orientation, so the
+            // upright frame the GL stage produces is PORTRAIT for the 0°/180° settings and
+            // LANDSCAPE for 90°/270°. Size the encoder surface to match that aspect, or the
+            // full-frame draw stretches (e.g. 16:9 content squeezed into a 9:16 surface).
+            // The GL rotation stage (GlRotationPipe) does the actual pixel rotation;
+            // KEY_ROTATION is only metadata that raw H.264 over RTSP ignores.
             int rot = ((config.rotationDegrees % 360) + 360) % 360;
-            boolean swap = (rot == 90 || rot == 270);
-            int outW = swap ? config.resolution.h : config.resolution.w;
-            int outH = swap ? config.resolution.w : config.resolution.h;
+            boolean swap = (rot == 0 || rot == 180);   // portrait output for these settings
+            int outW = swap ? config.captureH : config.captureW;
+            int outH = swap ? config.captureW : config.captureH;
 
+            Log.d(TAG, "encoder surface " + outW + "x" + outH + " (capture " + config.captureW
+                    + "x" + config.captureH + ", rot=" + rot + ", swap=" + swap + ")");
             MediaFormat fmt = MediaFormat.createVideoFormat(MIME, outW, outH);
             fmt.setInteger(MediaFormat.KEY_BIT_RATE, config.bitrateKbps * 1000);
             fmt.setInteger(MediaFormat.KEY_FRAME_RATE, config.fps);

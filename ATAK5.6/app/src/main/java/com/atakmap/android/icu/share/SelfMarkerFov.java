@@ -94,14 +94,53 @@ public final class SelfMarkerFov {
         try {
             CotMapComponent cmc = CotMapComponent.getInstance();
             if (cmc != null) {
-                cmc.removeAdditionalDetail(KEY_SENSOR);
+                // Peers cache the last sensor FOV — a report that merely omits it leaves the
+                // wedge stuck on our skittle. So actively push a collapsed FOV (zero range +
+                // angle) and force a report: receivers redraw it as nothing. Drop the video
+                // detail now too so the "tap to watch" link goes away.
+                cmc.addAdditionalDetail(KEY_SENSOR, clearedSensorDetail());
                 cmc.removeAdditionalDetail(KEY_DEVICE);
                 cmc.removeAdditionalDetail(KEY_VIDEO);
+                forceReport();
             }
         } catch (Throwable t) {
-            Log.w(TAG, "remove additional detail: " + t.getMessage());
+            Log.w(TAG, "clear FOV detail: " + t.getMessage());
         }
+        // After the clear has gone out, remove the sensor detail entirely so later self
+        // reports are clean, and force one more report.
+        handler.postDelayed(() -> {
+            try {
+                CotMapComponent cmc = CotMapComponent.getInstance();
+                if (cmc != null) { cmc.removeAdditionalDetail(KEY_SENSOR); forceReport(); }
+            } catch (Throwable ignored) {}
+        }, 1500);
         removeLocalFov();
+    }
+
+    /** Broadcast REPORT_LOCATION so ATAK emits the self report immediately (setReportAsap),
+     *  instead of waiting for the throttled self-SA cadence (up to ~30s when stationary). */
+    private void forceReport() {
+        android.content.Intent report =
+                new android.content.Intent("com.atakmap.cot.reporting.REPORT_LOCATION");
+        report.putExtra("reason", "ICU FOV update");
+        com.atakmap.android.ipc.AtakBroadcast.getInstance().sendBroadcast(report);
+    }
+
+    /** A sensor detail with zero range/fov — tells peers to collapse (clear) the wedge. */
+    private CotDetail clearedSensorDetail() {
+        CotDetail s = new CotDetail("sensor");
+        s.setAttribute("elevation", "0");
+        s.setAttribute("vfov", "0");
+        s.setAttribute("roll", "0");
+        s.setAttribute("range", "0");
+        s.setAttribute("azimuth", "0");
+        s.setAttribute("fov", "0");
+        s.setAttribute("fovRed", "0.0");
+        s.setAttribute("fovGreen", "0.6");
+        s.setAttribute("fovBlue", "1.0");
+        s.setAttribute("fovAlpha", "0.0");
+        s.setAttribute("displayMagneticReference", "0");
+        return s;
     }
 
     // ── Internals ──────────────────────────────────────────────────────────────
@@ -122,10 +161,7 @@ public final class SelfMarkerFov {
                 }
                 // Ask ATAK to emit the self report now (setReportAsap) — otherwise the
                 // updated FOV waits for the dynamic/stationary reporting cadence.
-                android.content.Intent report =
-                        new android.content.Intent("com.atakmap.cot.reporting.REPORT_LOCATION");
-                report.putExtra("reason", "ICU FOV update");
-                com.atakmap.android.ipc.AtakBroadcast.getInstance().sendBroadcast(report);
+                forceReport();
             } catch (Throwable t) {
                 Log.w(TAG, "outbound refresh: " + t.getMessage());
             }

@@ -63,6 +63,13 @@ public class CapturePipeline {
         if (running) return;
         nalCount.set(0);
 
+        // Size capture/encode to the sensor's native aspect (at the chosen quality height)
+        // so the stream keeps the camera's true proportions — no forced-16:9 crop or stretch.
+        int[] cap = CameraSource.chooseNativeCaptureSize(ctx, config.useFrontCamera, config.resolution.h);
+        config.captureW = cap[0];
+        config.captureH = cap[1];
+        Log.d(TAG, "native capture size " + config.captureW + "x" + config.captureH);
+
         Surface encoderSurface = encoder.start(config, new H264Encoder.Callback() {
             @Override public void onSpsReady(byte[] s) {
                 sps = s; Log.d(TAG, "SPS ready (" + s.length + "B)");
@@ -93,7 +100,7 @@ public class CapturePipeline {
         // GL pipe's SurfaceTexture; the pipe draws the rotated frame into the real encoder
         // surface. On any GL failure, fall back to feeding the encoder directly (no rotation).
         Surface cameraTarget = encoderSurface;
-        glPipe = new GlRotationPipe(encoderSurface, config.resolution.w, config.resolution.h,
+        glPipe = new GlRotationPipe(encoderSurface, config.captureW, config.captureH,
                 config.rotationDegrees, config.useFrontCamera);
         Surface glInput = glPipe.start();
         if (glInput != null) {

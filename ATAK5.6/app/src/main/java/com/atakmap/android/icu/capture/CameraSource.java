@@ -238,20 +238,70 @@ public class CameraSource {
 
     private String selectCamera(CameraManager manager, boolean useFront)
             throws CameraAccessException {
+        String id = findCameraId(manager, useFront);
+        if (id != null) {
+            android.hardware.camera2.CameraCharacteristics ch = manager.getCameraCharacteristics(id);
+            Integer so = ch.get(CameraCharacteristics.SENSOR_ORIENTATION);
+            if (so != null) sensorOrientation = so;
+            Integer facing = ch.get(CameraCharacteristics.LENS_FACING);
+            frontFacing = facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT;
+        }
+        return id;
+    }
+
+    private static String findCameraId(CameraManager manager, boolean useFront)
+            throws CameraAccessException {
         int target = useFront ? CameraCharacteristics.LENS_FACING_FRONT
                               : CameraCharacteristics.LENS_FACING_BACK;
         String[] ids = manager.getCameraIdList();
         for (String id : ids) {
-            android.hardware.camera2.CameraCharacteristics ch =
-                    manager.getCameraCharacteristics(id);
-            Integer facing = ch.get(CameraCharacteristics.LENS_FACING);
-            if (facing != null && facing == target) {
-                Integer so = ch.get(CameraCharacteristics.SENSOR_ORIENTATION);
-                if (so != null) sensorOrientation = so;
-                frontFacing = (facing == CameraCharacteristics.LENS_FACING_FRONT);
-                return id;
-            }
+            Integer facing = manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING);
+            if (facing != null && facing == target) return id;
         }
         return ids.length > 0 ? ids[0] : null;
+    }
+
+    /**
+     * Pick a capture size (landscape, w ≥ h) whose aspect ratio matches the sensor's native
+     * full-FOV aspect, at roughly {@code targetHeight}. Reads camera characteristics without
+     * opening the device, so the encoder can be sized to the native ratio before capture —
+     * the stream then shows the camera's true view, uncropped and unstretched, on any device.
+     * Falls back to {@code targetHeight}×16:9 if characteristics are unavailable.
+     */
+    public static int[] chooseNativeCaptureSize(Context ctx, boolean useFront, int targetHeight) {
+        int fbH = targetHeight, fbW = (targetHeight * 16) / 9;
+        try {
+            CameraManager m = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
+            String id = findCameraId(m, useFront);
+            if (id == null) return new int[]{ fbW, fbH };
+            CameraCharacteristics ch = m.getCameraCharacteristics(id);
+
+            android.graphics.Rect arr = ch.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+            float nativeAspect = (arr != null && arr.height() > 0)
+                    ? (float) arr.width() / arr.height() : 4f / 3f;   // landscape aspect
+
+            android.hardware.camera2.params.StreamConfigurationMap map =
+                    ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+            if (map == null) return new int[]{ fbW, fbH };
+            android.util.Size[] sizes = map.getOutputSizes(android.graphics.SurfaceTexture.class);
+            if (sizes == null || sizes.length == 0) return new int[]{ fbW, fbH };
+
+            android.util.Size best = null;
+            float bestAspectErr = Float.MAX_VALUE;
+            int bestHeightErr = Integer.MAX_VALUE;
+            for (android.util.Size s : sizes) {
+                float aspect = (float) s.getWidth() / s.getHeight();   // sizes are landscape
+                float aErr = Math.abs(aspect - nativeAspect);
+                int hErr = Math.abs(s.getHeight() - targetHeight);
+                // Prefer native aspect first, then the closest height to the target.
+                if (aErr < bestAspectErr - 0.01f
+                        || (Math.abs(aErr - bestAspectErr) <= 0.01f && hErr < bestHeightErr)) {
+                    best = s; bestAspectErr = aErr; bestHeightErr = hErr;
+                }
+            }
+            if (best != null) return new int[]{ best.getWidth(), best.getHeight() };
+        } catch (Exception ignored) {
+        }
+        return new int[]{ fbW, fbH };
     }
 }

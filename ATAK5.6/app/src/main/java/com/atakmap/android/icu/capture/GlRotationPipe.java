@@ -76,12 +76,16 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
     private SurfaceTexture surfaceTexture;
     private Surface inputSurface;            // camera draws here
     private FloatBuffer quad;
-    private final float[] stMatrix  = new float[16];
-    private final float[] rotMatrix = new float[16];
+    private int vpW, vpH;                     // encoder surface (viewport) size
+    private final float[] stMatrix = new float[16];
+    private final float[] mvp   = new float[16];
+    private final float[] proj  = new float[16];
+    private final float[] model = new float[16];
 
     private HandlerThread thread;
     private Handler       handler;
     private volatile boolean released;
+    private boolean loggedSt;   // one-shot ST-matrix log for diagnosing zoom/crop
 
     public GlRotationPipe(Surface encoderInput, int srcWidth, int srcHeight,
                           int rotationDegrees, boolean mirror) {
@@ -135,14 +139,28 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
         try {
             surfaceTexture.updateTexImage();
             surfaceTexture.getTransformMatrix(stMatrix);
+            if (!loggedSt) {
+                loggedSt = true;
+                Log.d(TAG, "stMatrix=" + java.util.Arrays.toString(stMatrix));
+            }
 
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
             GLES20.glUseProgram(program);
 
-            // Rotation about the frame centre; mirror horizontally for the front camera.
-            Matrix.setIdentityM(rotMatrix, 0);
-            Matrix.rotateM(rotMatrix, 0, rotationDeg, 0f, 0f, 1f);
-            if (mirror) Matrix.scaleM(rotMatrix, 0, -1f, 1f, 1f);
+            // Rotate in PIXEL space via an orthographic projection so a 90°/270° rotation
+            // never distorts (rotating the quad directly in square NDC and mapping to a
+            // non-square viewport stretches it). The unit quad is scaled to the source's
+            // upright aspect, rotated, then projected into the viewport's pixel box; because
+            // the encoder surface is sized to the rotated aspect, it fills exactly.
+            // Negate the angle to match the preview's clockwise Matrix.postRotate.
+            Matrix.orthoM(proj, 0, -vpW / 2f, vpW / 2f, -vpH / 2f, vpH / 2f, -1f, 1f);
+            Matrix.setIdentityM(model, 0);
+            Matrix.rotateM(model, 0, -rotationDeg, 0f, 0f, 1f);
+            if (mirror) Matrix.scaleM(model, 0, -1f, 1f, 1f);
+            // Upright source is the camera buffer transposed (sensor is mounted 90°): the
+            // long buffer edge becomes the tall edge. Half-extents for the unit quad.
+            Matrix.scaleM(model, 0, srcH / 2f, srcW / 2f, 1f);
+            Matrix.multiplyMM(mvp, 0, proj, 0, model, 0);
 
             quad.position(0);
             GLES20.glVertexAttribPointer(aPosition, 2, GLES20.GL_FLOAT, false, 16, quad);
@@ -151,7 +169,7 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
             GLES20.glVertexAttribPointer(aTexCoord, 2, GLES20.GL_FLOAT, false, 16, quad);
             GLES20.glEnableVertexAttribArray(aTexCoord);
 
-            GLES20.glUniformMatrix4fv(uRot, 1, false, rotMatrix, 0);
+            GLES20.glUniformMatrix4fv(uRot, 1, false, mvp, 0);
             GLES20.glUniformMatrix4fv(uStMatrix, 1, false, stMatrix, 0);
 
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
@@ -223,7 +241,10 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
         int[] w = new int[1], h = new int[1];
         EGL14.eglQuerySurface(eglDisplay, eglSurface, EGL14.EGL_WIDTH, w, 0);
         EGL14.eglQuerySurface(eglDisplay, eglSurface, EGL14.EGL_HEIGHT, h, 0);
-        GLES20.glViewport(0, 0, w[0], h[0]);
+        vpW = w[0]; vpH = h[0];
+        GLES20.glViewport(0, 0, vpW, vpH);
+        Log.d(TAG, "GL viewport " + vpW + "x" + vpH + " (src " + srcW + "x" + srcH
+                + ", rot=" + rotationDeg + ")");
     }
 
     private void initGl() {

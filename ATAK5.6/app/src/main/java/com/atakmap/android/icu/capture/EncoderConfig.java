@@ -17,6 +17,16 @@ public class EncoderConfig {
     }
 
     public Resolution resolution  = Resolution.P720;
+
+    /**
+     * Actual capture/encode dimensions in landscape (w ≥ h), chosen at runtime to match
+     * the camera sensor's <b>native aspect ratio</b> at ~{@link #resolution} height — so the
+     * stream is never cropped or stretched to a forced 16:9. Populated by CapturePipeline
+     * before the encoder starts; defaults mirror {@code resolution} until then.
+     */
+    public int captureW = 1280;
+    public int captureH = 720;
+
     public int        bitrateKbps = 2500;
     public int        fps         = 30;
     public int        gopSeconds  = 2;
@@ -32,8 +42,8 @@ public class EncoderConfig {
     /** Whether the persistent on-map broadcast-status badge is shown. Default on. */
     public boolean showStatusWidget = true;
 
-    /** Capture and stream microphone audio (AAC) alongside the video. Default off. */
-    public boolean streamAudio = false;
+    /** Capture and stream microphone audio (AAC) alongside the video. Default on. */
+    public boolean streamAudio = true;
 
     /**
      * Allow the screen to turn off while broadcasting (capture continues in the
