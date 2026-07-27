@@ -59,9 +59,11 @@ public final class Prefs {
         enc.useFrontCamera  = sp.getBoolean("front_camera", false);
         enc.rotationDegrees = sp.getInt("rotation", 270);
         enc.showStatusWidget = sp.getBoolean("show_status_widget", true);
+        enc.streamAudio      = sp.getBoolean("stream_audio", true);
         enc.streamWithScreenOff = sp.getBoolean("stream_screen_off", false);
         enc.gopSeconds     = sp.getInt("keyframe_sec", 2);
         enc.fovRefreshSec  = sp.getInt("fov_refresh_sec", 3);
+        enc.fovRangeM      = sp.getInt("fov_range_m", 100);
     }
 
     public static void save(Context ctx, MediaServerConfig srv, EncoderConfig enc) {
@@ -85,9 +87,11 @@ public final class Prefs {
                 .putBoolean("front_camera", enc.useFrontCamera)
                 .putInt("rotation", enc.rotationDegrees)
                 .putBoolean("show_status_widget", enc.showStatusWidget)
+                .putBoolean("stream_audio", enc.streamAudio)
                 .putBoolean("stream_screen_off", enc.streamWithScreenOff)
                 .putInt("keyframe_sec", enc.gopSeconds)
                 .putInt("fov_refresh_sec", enc.fovRefreshSec)
+                .putInt("fov_range_m", enc.fovRangeM)
                 .commit();
     }
 

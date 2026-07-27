@@ -33,10 +33,16 @@ public class CapturePipeline {
     public interface Sink {
         void onFormat(byte[] sps, byte[] pps);
         void onNal(byte[] data, boolean keyFrame, long ptsUs);
+        /** AAC AudioSpecificConfig — arrives before audio samples (video-only sinks ignore). */
+        default void onAudioFormat(byte[] asc, int sampleRate, int channels) {}
+        /** One raw AAC access unit with its presentation time (microseconds). */
+        default void onAudioSample(byte[] aac, long ptsUs) {}
     }
 
     private final H264Encoder encoder = new H264Encoder();
     private final CameraSource camera = new CameraSource();
+    private final AacEncoder   audio  = new AacEncoder();
+    private GlRotationPipe      glPipe;   // rotates camera → encoder pixels (null = no rotation)
 
     private final AtomicInteger nalCount = new AtomicInteger();
     private volatile boolean running;
@@ -56,6 +62,13 @@ public class CapturePipeline {
     public void start(Context ctx, EncoderConfig config, Surface preview, Listener listener) {
         if (running) return;
         nalCount.set(0);
+
+        // Size capture/encode to the sensor's native aspect (at the chosen quality height)
+        // so the stream keeps the camera's true proportions — no forced-16:9 crop or stretch.
+        int[] cap = CameraSource.chooseNativeCaptureSize(ctx, config.useFrontCamera, config.resolution.h);
+        config.captureW = cap[0];
+        config.captureH = cap[1];
+        Log.d(TAG, "native capture size " + config.captureW + "x" + config.captureH);
 
         Surface encoderSurface = encoder.start(config, new H264Encoder.Callback() {
             @Override public void onSpsReady(byte[] s) {
@@ -82,11 +95,46 @@ public class CapturePipeline {
             return;
         }
 
-        camera.start(ctx, config, encoderSurface, preview, message -> {
+        // Insert a GL stage so the camera frames are physically rotated into the encoder
+        // (raw H.264 over RTSP carries no rotation metadata). The camera renders into the
+        // GL pipe's SurfaceTexture; the pipe draws the rotated frame into the real encoder
+        // surface. On any GL failure, fall back to feeding the encoder directly (no rotation).
+        Surface cameraTarget = encoderSurface;
+        glPipe = new GlRotationPipe(encoderSurface, config.captureW, config.captureH,
+                config.rotationDegrees, config.useFrontCamera);
+        Surface glInput = glPipe.start();
+        if (glInput != null) {
+            cameraTarget = glInput;
+        } else {
+            Log.w(TAG, "GL rotation stage failed to start; encoding camera directly (no rotation)");
+            glPipe.release();
+            glPipe = null;
+        }
+
+        camera.start(ctx, config, cameraTarget, preview, message -> {
             running = false;
             stop();
             listener.onError(message);
         });
+
+        // Optional mic audio as a second (AAC) track. A failure here is non-fatal — the
+        // video keeps streaming; we just log and continue without audio.
+        if (config.streamAudio) {
+            boolean ok = audio.start(new AacEncoder.Callback() {
+                @Override public void onAudioFormat(byte[] asc, int sampleRate, int channels) {
+                    Sink s = sink;
+                    if (s != null) s.onAudioFormat(asc, sampleRate, channels);
+                }
+                @Override public void onAudioSample(byte[] aac, long ptsUs) {
+                    Sink s = sink;
+                    if (s != null) s.onAudioSample(aac, ptsUs);
+                }
+                @Override public void onError(String message) {
+                    Log.w(TAG, "audio disabled: " + message);
+                }
+            });
+            if (!ok) Log.w(TAG, "audio requested but did not start; continuing video-only");
+        }
 
         running = true;
         listener.onStarted();
@@ -94,8 +142,10 @@ public class CapturePipeline {
 
     public void stop() {
         running = false;
-        camera.stop();
-        encoder.stop();
+        audio.stop();
+        camera.stop();                 // stop feeding the GL input first…
+        if (glPipe != null) { glPipe.release(); glPipe = null; }   // …then tear down GL…
+        encoder.stop();                // …then the encoder it fed
     }
 
     /**
