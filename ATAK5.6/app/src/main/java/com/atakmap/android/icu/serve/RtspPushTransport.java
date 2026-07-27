@@ -21,6 +21,12 @@ public class RtspPushTransport implements Transport {
     private volatile String state = "idle";
     private volatile String failReason;   // non-null once the publish handshake fails
 
+    // Both tracks must be known before the SDP is built. Video (SPS/PPS) always; audio
+    // (AAC config) only when the operator enabled it — we wait for it before announcing.
+    private volatile boolean audioExpected, audioReady;
+    private byte[] vsps, vpps, aAsc;
+    private int aRate, aChannels;
+
     public RtspPushTransport(MediaServerConfig server) { this.server = server; }
 
     @Override public String name() { return "RTSP push → server"; }
@@ -28,12 +34,33 @@ public class RtspPushTransport implements Transport {
     @Override
     public void start(EncoderConfig config) throws Exception {
         if (!server.isConfigured()) throw new IllegalStateException("No media server configured");
+        audioExpected = config.streamAudio;
         state = "waiting for keyframe…";
     }
 
     @Override
     public void onFormat(byte[] sps, byte[] pps) {
-        if (up || handshaking || sps == null || pps == null) return;
+        if (sps == null || pps == null) return;
+        vsps = sps.clone();
+        vpps = pps.clone();
+        maybeHandshake();
+    }
+
+    @Override
+    public void onAudioFormat(byte[] asc, int sampleRate, int channels) {
+        if (asc == null || asc.length == 0) return;
+        aAsc = asc.clone();
+        aRate = sampleRate;
+        aChannels = channels;
+        audioReady = true;
+        maybeHandshake();
+    }
+
+    /** Start the publish once video (and, if enabled, audio) formats are known. Runs once. */
+    private synchronized void maybeHandshake() {
+        if (up || handshaking) return;
+        if (vsps == null || vpps == null) return;
+        if (audioExpected && !audioReady) return;   // hold for the AAC config
         handshaking = true;
 
         String host = server.host.trim();
@@ -43,17 +70,20 @@ public class RtspPushTransport implements Transport {
         int colon = host.indexOf(':'); if (colon >= 0) host = host.substring(0, colon);
         final String fHost = host;
 
-        final byte[] s = sps.clone(), p = pps.clone();
+        final byte[] s = vsps, p = vpps;
+        final boolean withAudio = audioExpected && audioReady;
+        final byte[] asc = aAsc; final int rate = aRate, ch = aChannels;
         state = "connecting…";
         failReason = null;
         new Thread(() -> {
             try {
                 pusher = new RtspPusher(fHost, server.serverPort, server.streamPath,
                         server.username, server.password);
+                if (withAudio) pusher.setAudio(asc, rate, ch);
                 pusher.publish(s, p);
                 up = true;
                 state = "live";
-                Log.d(TAG, "RTSP publish established");
+                Log.d(TAG, "RTSP publish established" + (withAudio ? " (with audio)" : ""));
             } catch (Exception e) {
                 up = false;
                 failReason = e.getMessage();
@@ -61,6 +91,12 @@ public class RtspPushTransport implements Transport {
                 Log.w(TAG, "RTSP publish failed: " + e.getMessage(), e);
             }
         }, "ICU-RtspPush").start();
+    }
+
+    @Override
+    public void onAudioSample(byte[] aac, long ptsUs) {
+        RtspPusher pr = pusher;
+        if (up && pr != null) pr.sendAudioSample(aac, ptsUs);
     }
 
     @Override

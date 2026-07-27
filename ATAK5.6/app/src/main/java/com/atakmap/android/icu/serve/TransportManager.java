@@ -61,6 +61,16 @@ public class TransportManager implements CapturePipeline.Sink {
         for (Transport t : transports) t.onNal(data, keyFrame, ptsUs);
     }
 
+    @Override
+    public void onAudioFormat(byte[] asc, int sampleRate, int channels) {
+        for (Transport t : transports) t.onAudioFormat(asc, sampleRate, channels);
+    }
+
+    @Override
+    public void onAudioSample(byte[] aac, long ptsUs) {
+        for (Transport t : transports) t.onAudioSample(aac, ptsUs);
+    }
+
     // ── Status ──────────────────────────────────────────────────────────────────
 
     /** De-duplicated list of every viewable endpoint across all transports. */

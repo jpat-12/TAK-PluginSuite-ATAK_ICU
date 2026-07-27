@@ -33,10 +33,15 @@ public class CapturePipeline {
     public interface Sink {
         void onFormat(byte[] sps, byte[] pps);
         void onNal(byte[] data, boolean keyFrame, long ptsUs);
+        /** AAC AudioSpecificConfig — arrives before audio samples (video-only sinks ignore). */
+        default void onAudioFormat(byte[] asc, int sampleRate, int channels) {}
+        /** One raw AAC access unit with its presentation time (microseconds). */
+        default void onAudioSample(byte[] aac, long ptsUs) {}
     }
 
     private final H264Encoder encoder = new H264Encoder();
     private final CameraSource camera = new CameraSource();
+    private final AacEncoder   audio  = new AacEncoder();
 
     private final AtomicInteger nalCount = new AtomicInteger();
     private volatile boolean running;
@@ -88,12 +93,32 @@ public class CapturePipeline {
             listener.onError(message);
         });
 
+        // Optional mic audio as a second (AAC) track. A failure here is non-fatal — the
+        // video keeps streaming; we just log and continue without audio.
+        if (config.streamAudio) {
+            boolean ok = audio.start(new AacEncoder.Callback() {
+                @Override public void onAudioFormat(byte[] asc, int sampleRate, int channels) {
+                    Sink s = sink;
+                    if (s != null) s.onAudioFormat(asc, sampleRate, channels);
+                }
+                @Override public void onAudioSample(byte[] aac, long ptsUs) {
+                    Sink s = sink;
+                    if (s != null) s.onAudioSample(aac, ptsUs);
+                }
+                @Override public void onError(String message) {
+                    Log.w(TAG, "audio disabled: " + message);
+                }
+            });
+            if (!ok) Log.w(TAG, "audio requested but did not start; continuing video-only");
+        }
+
         running = true;
         listener.onStarted();
     }
 
     public void stop() {
         running = false;
+        audio.stop();
         camera.stop();
         encoder.stop();
     }

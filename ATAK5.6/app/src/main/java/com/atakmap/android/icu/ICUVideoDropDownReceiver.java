@@ -70,6 +70,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     public static final String BLACKOUT = "com.atakmap.android.icu.BLACKOUT";
 
     private static final int REQ_CAMERA = 4711;
+    private static final int REQ_MIC    = 4712;
 
     private final Context pluginContext;
     private final View    root;
@@ -243,6 +244,9 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             return;
         }
         if (!hasCameraPermission()) { requestCameraPermission(); return; }
+        // Mic is only needed when the operator turned on audio; request it up front so the
+        // AAC track can start. (Turn the audio setting off to broadcast video-only instead.)
+        if (config.streamAudio && !hasMicPermission()) { requestMicPermission(); return; }
         // Verify before going live (shares camera + location to the network).
         String dest = serverConfig.pushEnabled()
                 ? (serverConfig.protocolName() + " → " + serverConfig.pushUrl())
@@ -727,6 +731,13 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             final EditText fovRange = addEdit(ctx, videoCard, "FOV range (m)",
                     Integer.toString(config.fovRangeM), android.text.InputType.TYPE_CLASS_NUMBER);
 
+            // Stream microphone audio as a second (AAC) track.
+            final CharSequence[] audioOpts = { "Off", "On" };
+            final int[] audioSel = { config.streamAudio ? 1 : 0 };
+            final Button audioBtn = addPicker(ctx, videoCard, "Stream audio (mic)", audioOpts[audioSel[0]]);
+            audioBtn.setOnClickListener(x -> picker(ctx, "Stream audio (mic)", audioOpts,
+                    i -> { audioSel[0] = i; audioBtn.setText(audioOpts[i]); }));
+
             // ── Card: Display & power ────────────────────────────────────────────
             final LinearLayout dispCard = addCard(ctx, "DISPLAY & POWER");
             final CharSequence[] widgetOpts = { "On", "Off" };
@@ -811,6 +822,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 config.gopSeconds = gopVals[gopSel[0]];
                 config.fovRefreshSec = Math.max(1, intOf(fovRefresh, 3));
                 config.fovRangeM = Math.max(1, intOf(fovRange, 100));
+                config.streamAudio = audioSel[0] == 1;
                 config.showStatusWidget = widgetSel[0] == 0;
                 config.streamWithScreenOff = screenSel[0] == 1;
 
@@ -1064,6 +1076,22 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             Toast.makeText(ctx, "Grant camera access, then tap Broadcast again.", Toast.LENGTH_LONG).show();
         } else {
             setStatus("Camera permission required — grant ATAK camera access in Android Settings.");
+        }
+    }
+
+    private boolean hasMicPermission() {
+        return atakContext().checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestMicPermission() {
+        Context ctx = atakContext();
+        if (ctx instanceof Activity) {
+            ((Activity) ctx).requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MIC);
+            Toast.makeText(ctx, "Grant microphone access for audio, then tap Broadcast again.",
+                    Toast.LENGTH_LONG).show();
+        } else {
+            setStatus("Microphone permission required — grant ATAK mic access in Android Settings.");
         }
     }
 
