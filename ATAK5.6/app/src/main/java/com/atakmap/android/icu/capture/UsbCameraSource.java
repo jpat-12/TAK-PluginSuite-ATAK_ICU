@@ -2,6 +2,8 @@ package com.atakmap.android.icu.capture;
 
 import android.content.Context;
 import android.hardware.usb.UsbDevice;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Surface;
 
 import com.atakmap.coremap.log.Log;
@@ -33,6 +35,11 @@ public class UsbCameraSource {
         default void onOpened() {}
     }
 
+    /** How long to wait for a USB camera to actually open before reporting "not found" —
+     *  register()/onAttach are async with no other signal if nothing is plugged in. */
+    private static final long CONNECT_TIMEOUT_MS = 5000;
+
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private ICameraHelper cameraHelper;
     private Surface encoderSurface;
     private Surface previewSurface;
@@ -59,36 +66,64 @@ public class UsbCameraSource {
         this.previewSurface = previewSurface;
 
         UVCUtils.init(ctx.getApplicationContext());
-        cameraHelper = new CameraHelper();
-        cameraHelper.setStateCallback(new ICameraHelper.StateCallback() {
+        final ICameraHelper helper = new CameraHelper();
+        cameraHelper = helper;
+
+        // register()/onAttach are async with no other signal if nothing is (or never gets)
+        // plugged in — without this, picking "USB camera" with no device attached would
+        // leave the pipeline silently "broadcasting" a black frame forever.
+        final Runnable connectTimeout = () -> {
+            if (cameraHelper == helper && !running) {
+                Log.w(TAG, "no USB camera opened within " + CONNECT_TIMEOUT_MS + "ms");
+                cb.onError("No USB camera detected — check the connection");
+            }
+        };
+        mainHandler.postDelayed(connectTimeout, CONNECT_TIMEOUT_MS);
+
+        helper.setStateCallback(new ICameraHelper.StateCallback() {
+            // Every callback below fires on the main thread (StateCallbackWrapper posts to
+            // it), same thread stop() runs on — but stop() may have already nulled/replaced
+            // cameraHelper by the time a callback queued just before it finally runs, so
+            // guard against acting on a stale/superseded helper instance.
+            private boolean isCurrent() { return cameraHelper == helper; }
+
             @Override public void onAttach(UsbDevice device) {
+                if (!isCurrent()) return;
                 Log.d(TAG, "USB camera attached: " + device.getDeviceName());
-                cameraHelper.selectDevice(device);
+                helper.selectDevice(device);
             }
             @Override public void onDeviceOpen(UsbDevice device, boolean isFirstOpen) {
-                cameraHelper.openCamera();
+                if (!isCurrent()) return;
+                helper.openCamera();
             }
             @Override public void onCameraOpen(UsbDevice device) {
+                if (!isCurrent()) return;
                 Log.d(TAG, "USB camera open: " + device.getDeviceName());
+                mainHandler.removeCallbacks(connectTimeout);
                 if (UsbCameraSource.this.encoderSurface != null) {
-                    cameraHelper.addSurface(UsbCameraSource.this.encoderSurface, true);
+                    helper.addSurface(UsbCameraSource.this.encoderSurface, true);
                 }
                 if (UsbCameraSource.this.previewSurface != null) {
-                    cameraHelper.addSurface(UsbCameraSource.this.previewSurface, false);
+                    helper.addSurface(UsbCameraSource.this.previewSurface, false);
                 }
-                cameraHelper.startPreview();
+                helper.startPreview();
                 running = true;
                 cb.onOpened();
             }
             @Override public void onCameraClose(UsbDevice device) { running = false; }
             @Override public void onDeviceClose(UsbDevice device) {}
             @Override public void onDetach(UsbDevice device) {
+                if (!isCurrent()) return;
                 if (running) { running = false; cb.onError("USB camera disconnected"); }
             }
             @Override public void onCancel(UsbDevice device) {
+                if (!isCurrent()) return;
+                mainHandler.removeCallbacks(connectTimeout);
                 cb.onError("USB camera permission denied");
             }
             @Override public void onError(UsbDevice device, CameraException e) {
+                if (!isCurrent()) return;
+                mainHandler.removeCallbacks(connectTimeout);
                 running = false;
                 cb.onError("USB camera error: " + e.getMessage());
             }
@@ -109,11 +144,12 @@ public class UsbCameraSource {
 
     public void stop() {
         running = false;
-        if (cameraHelper != null) {
-            try { cameraHelper.stopPreview(); } catch (Exception ignored) {}
-            try { cameraHelper.setStateCallback(null); } catch (Exception ignored) {}
-            try { cameraHelper.release(); } catch (Exception ignored) {}
-            cameraHelper = null;
+        ICameraHelper helper = cameraHelper;
+        cameraHelper = null;   // invalidates isCurrent() for any callback already queued
+        if (helper != null) {
+            try { helper.stopPreview(); } catch (Exception ignored) {}
+            try { helper.setStateCallback(null); } catch (Exception ignored) {}
+            try { helper.release(); } catch (Exception ignored) {}
         }
         encoderSurface = null;
         previewSurface = null;
