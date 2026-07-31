@@ -94,6 +94,28 @@
 ## dontwarn and keep directives
 ######################################################################
 
+# UVCAndroid (com.herohan:UVCAndroid) — required keep rules from its README; the library
+# talks to native code via reflection/JNI so R8 must not rename or strip these.
+-keep class com.herohan.uvcapp.** { *; }
+-keep class com.serenegiant.usb.** { *; }
+-keepclassmembers class * implements com.serenegiant.usb.IButtonCallback {*;}
+-keepclassmembers class * implements com.serenegiant.usb.IFrameCallback {*;}
+-keepclassmembers class * implements com.serenegiant.usb.IStatusCallback {*;}
+
+# cn.hutool:hutool-core — a transitive dependency of UVCAndroid's published artifact,
+# unused by the camera/USBMonitor code paths we actually call (CameraHelper/addSurface).
+# It's a general-purpose desktop Java toolkit with optional java.awt/Swing/javax.tools
+# helpers gated behind reflection at runtime; those classes don't exist on Android, which
+# is fine since nothing in our flow reaches them, but R8 needs to be told not to verify them.
+-dontwarn cn.hutool.**
+-dontwarn java.awt.**
+-dontwarn javax.swing.**
+-dontwarn javax.tools.**
+-dontwarn javax.naming.**
+-dontwarn javax.xml.bind.**
+-dontwarn java.beans.**
+-dontwarn java.lang.management.**
+
 # Suppress warnings for optional TLS providers (BouncyCastle, Conscrypt, OpenJSSE)
 # pulled in transitively by OkHttp — these are runtime-optional and absent on Android.
 -dontwarn org.bouncycastle.jsse.BCSSLParameters

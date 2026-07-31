@@ -53,6 +53,16 @@ public class CameraSource {
     }
 
     /**
+     * Synthetic entry for the settings picker representing the direct UVC (USB) capture
+     * path — {@link UsbCameraSource} — for USB cameras Camera2 doesn't surface at all
+     * (the common case; see {@link #listCameras} for the Camera2-visible case).
+     */
+    public static CameraOption usbOption() {
+        return new CameraOption(com.atakmap.android.icu.capture.EncoderConfig.CAMERA_ID_USB,
+                "USB camera (UVC)", CameraCharacteristics.LENS_FACING_EXTERNAL);
+    }
+
+    /**
      * Enumerate every camera Camera2 exposes, including USB/UVC webcams that the OS
      * surfaces as {@code LENS_FACING_EXTERNAL} devices (some Android builds with USB
      * host + UVC support auto-register a plugged-in camera this way — no vendor SDK

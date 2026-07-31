@@ -262,6 +262,21 @@ dependencies {
     // Bundles a native .so; Phase 0 spike confirms it loads inside ATAK's plugin process.
     implementation 'io.github.webrtc-sdk:android:125.6422.07'
 
+    // UVC (USB webcam) capture — non-rooted USB-host driver so a plugged-in USB camera
+    // (e.g. a helmet cam) can be used as the video source alongside the phone's own
+    // Camera2 devices. Bundles a native .so (libusb/libuvc).
+    //
+    // legacy-support-v4/appcompat are excluded: the library's build.gradle lists them but
+    // its actual camera code (libuvccamera module) never imports androidx.appcompat/core —
+    // only its demo app does — so they're dead weight here. They also conflict with this
+    // project's global androidx.core exclude below (ATAK's host process already provides
+    // androidx.core; a bundled second copy breaks resource linking), which appcompat's own
+    // resources need to compile against.
+    implementation('com.herohan:UVCAndroid:1.0.13') {
+        exclude group: 'androidx.legacy', module: 'legacy-support-v4'
+        exclude group: 'androidx.appcompat', module: 'appcompat'
+    }
+
     testImplementation 'junit:junit:4.13.2'
 }
 

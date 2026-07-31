@@ -666,8 +666,13 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
             // Camera list is built live from Camera2 (not a static string-array) so a
             // plugged-in USB/UVC camera that Android surfaces as LENS_FACING_EXTERNAL
-            // shows up automatically alongside the built-in front/back cameras.
+            // shows up automatically alongside the built-in front/back cameras. A "USB
+            // camera (UVC)" entry is always appended too — most Android builds don't
+            // register a UVC webcam via Camera2 at all, so that entry routes through
+            // UsbCameraSource (com.herohan:UVCAndroid) instead, independent of whether
+            // Camera2 saw anything.
             final List<CameraSource.CameraOption> camList = CameraSource.listCameras(ctx);
+            camList.add(CameraSource.usbOption());
             final CharSequence[] camOpts;
             if (camList.isEmpty()) {
                 camOpts = pta(R.array.icu_cameras);   // fallback: legacy front/back toggle

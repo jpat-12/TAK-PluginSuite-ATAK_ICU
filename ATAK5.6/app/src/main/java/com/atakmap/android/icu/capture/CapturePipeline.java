@@ -41,11 +41,13 @@ public class CapturePipeline {
 
     private final H264Encoder encoder = new H264Encoder();
     private final CameraSource camera = new CameraSource();
+    private final UsbCameraSource usbCamera = new UsbCameraSource();
     private final AacEncoder   audio  = new AacEncoder();
     private GlRotationPipe      glPipe;   // rotates camera → encoder pixels (null = no rotation)
 
     private final AtomicInteger nalCount = new AtomicInteger();
     private volatile boolean running;
+    private volatile boolean usingUsbCamera;
     private volatile byte[] sps;
     private volatile byte[] pps;
     private volatile Sink sink;
@@ -62,11 +64,15 @@ public class CapturePipeline {
     public void start(Context ctx, EncoderConfig config, Surface preview, Listener listener) {
         if (running) return;
         nalCount.set(0);
+        usingUsbCamera = EncoderConfig.CAMERA_ID_USB.equals(config.cameraId);
 
-        // Size capture/encode to the sensor's native aspect (at the chosen quality height)
-        // so the stream keeps the camera's true proportions — no forced-16:9 crop or stretch.
-        int[] cap = CameraSource.chooseNativeCaptureSize(
-                ctx, config.cameraId, config.useFrontCamera, config.resolution.h);
+        // Size capture/encode. USB/UVC cameras aren't queryable via Camera2
+        // characteristics, so they get the same 16:9-at-target-height fallback
+        // chooseNativeCaptureSize itself uses when no camera info is available.
+        int[] cap = usingUsbCamera
+                ? new int[]{ (config.resolution.h * 16) / 9, config.resolution.h }
+                : CameraSource.chooseNativeCaptureSize(
+                        ctx, config.cameraId, config.useFrontCamera, config.resolution.h);
         config.captureW = cap[0];
         config.captureH = cap[1];
         Log.d(TAG, "native capture size " + config.captureW + "x" + config.captureH);
@@ -112,11 +118,21 @@ public class CapturePipeline {
             glPipe = null;
         }
 
-        camera.start(ctx, config, cameraTarget, preview, message -> {
-            running = false;
-            stop();
-            listener.onError(message);
-        });
+        if (usingUsbCamera) {
+            usbCamera.start(ctx, cameraTarget, preview, new UsbCameraSource.Callback() {
+                @Override public void onError(String message) {
+                    running = false;
+                    stop();
+                    listener.onError(message);
+                }
+            });
+        } else {
+            camera.start(ctx, config, cameraTarget, preview, message -> {
+                running = false;
+                stop();
+                listener.onError(message);
+            });
+        }
 
         // Optional mic audio as a second (AAC) track. A failure here is non-fatal — the
         // video keeps streaming; we just log and continue without audio.
@@ -145,6 +161,7 @@ public class CapturePipeline {
         running = false;
         audio.stop();
         camera.stop();                 // stop feeding the GL input first…
+        usbCamera.stop();
         if (glPipe != null) { glPipe.release(); glPipe = null; }   // …then tear down GL…
         encoder.stop();                // …then the encoder it fed
     }
@@ -155,7 +172,9 @@ public class CapturePipeline {
      * so broadcasting isn't interrupted. No-op if capture isn't running.
      */
     public void setPreviewSurface(Surface preview) {
-        if (running) camera.setPreviewSurface(preview);
+        if (!running) return;
+        if (usingUsbCamera) usbCamera.setPreviewSurface(preview);
+        else camera.setPreviewSurface(preview);
     }
 
     /** Forward codec config to the sink once both SPS and PPS are known. */
@@ -175,6 +194,7 @@ public class CapturePipeline {
      */
     public void captureStill(int jpegOrientation, CameraSource.StillCallback cb) {
         if (!running) { cb.onStillError("not broadcasting"); return; }
+        if (usingUsbCamera) { cb.onStillError("Snapshot isn't supported on a USB camera yet"); return; }
         camera.captureStill(jpegOrientation, cb);
     }
 }
