@@ -84,6 +84,11 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     // (ATAK renders it), no separate marker. See SelfMarkerFov.
     private final SelfMarkerFov sensor = new SelfMarkerFov();
 
+    // MISB ST 0601 KLV telemetry (position/orientation), muxed into the on-device RTSP
+    // transport's second RTP track. See serve/KlvEncoder + serve/RtspServer's KLV track.
+    private final com.atakmap.android.icu.share.KlvTelemetryEmitter klv =
+            new com.atakmap.android.icu.share.KlvTelemetryEmitter();
+
     // Registers the stream as a feed on the TAK Server's Video Feed Manager (server DB
     // via /Marti/vcm) when pushing to a server. See VideoConnectionPublisher.
     private final com.atakmap.android.icu.share.VideoConnectionPublisher videoPublisher =
@@ -316,6 +321,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     // video handlers). Deterministic URL — a push transport may not be up yet.
                     sensor.start(advertisedEndpoint().url, serverConfig.alias,
                             config.fovRefreshSec, config.fovRangeM);
+                    klv.start(atakContext(), getMapView(), transports, serverConfig.alias);
                     // Register the stream on the TAK Server's Video Feed Manager (server DB)
                     // when pushing to a server — makes it discoverable server-side, not just
                     // via the CoT feed on the self marker.
@@ -331,6 +337,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 Log.w(TAG, "capture error: " + message);
                 ui.post(() -> {
                     sensor.stop();
+                    klv.stop();
                     if (transports != null) transports.stopAll();
                     releaseWakeLock();
                     statusWidget.setStreaming(false);
@@ -346,6 +353,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
     private void stopBroadcast() {
         sensor.stop();                       // revert self marker to the user's prefs
+        klv.stop();
         // Flip the server feed inactive (can't DELETE it with an EUD cert).
         if (serverConfig.pushEnabled()
                 && serverConfig.feedUuid != null && !serverConfig.feedUuid.isEmpty()) {
@@ -1128,6 +1136,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         pipeline.stop();
         if (transports != null) { transports.stopAll(); transports = null; }
         sensor.stop();
+        klv.stop();
         releaseWakeLock();
         dismissBlackout();
     }

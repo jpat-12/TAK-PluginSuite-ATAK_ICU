@@ -39,6 +39,13 @@ public interface Transport {
     /** One raw AAC access unit with its presentation time (microseconds). */
     default void onAudioSample(byte[] aac, long ptsUs) {}
 
+    /**
+     * One MISB ST 0601 KLV Local Data Set packet (platform/sensor telemetry), fed
+     * roughly once a second by {@code share.KlvTelemetryEmitter}. Transports without a
+     * KLV side-channel ignore it (default no-op), same as the audio hooks.
+     */
+    default void onKlv(byte[] klvPacket, long ptsUs) {}
+
     void stop();
 
     /** URL(s) viewers can use for this transport. May be empty until started. */

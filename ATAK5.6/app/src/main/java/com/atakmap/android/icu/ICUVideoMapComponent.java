@@ -49,6 +49,9 @@ public class ICUVideoMapComponent extends AbstractWidgetMapComponent {
         // radial. Mirrors FeatureLink: a MapMenuFactory that rebuilds + augments the menu.
         radialMenu = new IcuSelfMarkerMenu(mapView, context);
         radialMenu.register();
+
+        // Phase 0 spike: confirm libwebrtc's native lib loads inside ATAK's plugin process.
+        com.atakmap.android.icu.serve.p2p.P2pProbe.run(context);
     }
 
     @Override

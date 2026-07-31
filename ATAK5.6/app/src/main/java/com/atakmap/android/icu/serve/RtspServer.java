@@ -92,6 +92,17 @@ public class RtspServer {
         }
     }
 
+    /** One MISB KLV packet, sent as a single RTP packet on the KLV track (trackID=1) to
+     *  every client that SETUP that track — same 90kHz clock convention as the video track,
+     *  but its own SSRC/sequence/payload type (97, "smpte336m/90000"). */
+    public void sendKlvUnit(byte[] klv, long ptsUs) {
+        if (clients.isEmpty()) return;
+        long rtpTs = ptsUs * 90L / 1000L;
+        for (ClientSession c : clients) {
+            if (c.playing) c.sendKlvUnit(klv, rtpTs);
+        }
+    }
+
     // ── Client session ────────────────────────────────────────────────────────
 
     private class ClientSession implements Runnable {
@@ -105,6 +116,14 @@ public class RtspServer {
         private int clientRtpPort;
         private int serverRtpPort;
         private final int sessionId = new Random().nextInt(99999999) + 1;
+
+        // ── KLV track (trackID=1) — set up only if the client asks for it via SDP's
+        // second m-line; players that only SETUP trackID=0 never touch these. ──────
+        private DatagramSocket klvUdpSocket;
+        private int klvClientRtpPort;
+        private int klvServerRtpPort;
+        private final int klvSsrc = new Random().nextInt();
+        private volatile int klvSeq = 0;
 
         ClientSession(Socket s) { this.socket = s; }
 
@@ -134,25 +153,35 @@ public class RtspServer {
         private void processRequest(String req, PrintWriter out) {
             if (req.isEmpty()) return;
             String[] lines  = req.split("\r\n");
-            String   method = lines[0].split(" ")[0];
+            String[] first  = lines[0].split(" ");
+            String   method = first[0];
+            String   uri    = first.length > 1 ? first[1] : "";
             String   cseq   = "0";
+            int[]    clientPort = {-1};
             for (String l : lines) {
                 if (l.startsWith("CSeq:"))      cseq = l.substring(5).trim();
-                if (l.startsWith("Transport:")) parseTransport(l);
+                if (l.startsWith("Transport:")) parseTransport(l, clientPort);
             }
             switch (method) {
                 case "OPTIONS":  handleOptions(out, cseq);  break;
                 case "DESCRIBE": handleDescribe(out, cseq); break;
-                case "SETUP":    handleSetup(out, cseq);    break;
+                case "SETUP":    handleSetup(out, cseq, uri, clientPort[0]); break;
                 case "PLAY":     handlePlay(out, cseq);     break;
                 case "TEARDOWN": handleTeardown(out, cseq); break;
                 default:         respond(out, 405, "Method Not Allowed", cseq, ""); break;
             }
         }
 
-        private void parseTransport(String line) {
+        private void parseTransport(String line, int[] clientPort) {
             Matcher m = Pattern.compile("client_port=(\\d+)").matcher(line);
-            if (m.find()) clientRtpPort = Integer.parseInt(m.group(1));
+            if (m.find()) clientPort[0] = Integer.parseInt(m.group(1));
+        }
+
+        /** Extracts the trackID from a SETUP request URI (e.g. .../live/trackID=1). Bare
+         *  URIs with no trackID (older/simpler clients) default to 0 — the video track. */
+        private int trackIdOf(String uri) {
+            Matcher m = Pattern.compile("trackID=(\\d+)").matcher(uri);
+            return m.find() ? Integer.parseInt(m.group(1)) : 0;
         }
 
         private void handleOptions(PrintWriter out, String cseq) {
@@ -167,16 +196,27 @@ public class RtspServer {
                     "\r\n" + sdp);
         }
 
-        private void handleSetup(PrintWriter out, String cseq) {
+        private void handleSetup(PrintWriter out, String cseq, String uri, int clientPort) {
+            int track = trackIdOf(uri);
+            int srvPort;
             try {
-                udpSocket     = new DatagramSocket();
-                serverRtpPort = udpSocket.getLocalPort();
+                if (track == 1) {
+                    klvClientRtpPort = clientPort;
+                    klvUdpSocket     = new DatagramSocket();
+                    klvServerRtpPort = klvUdpSocket.getLocalPort();
+                    srvPort = klvServerRtpPort;
+                } else {
+                    clientRtpPort = clientPort;
+                    udpSocket     = new DatagramSocket();
+                    serverRtpPort = udpSocket.getLocalPort();
+                    srvPort = serverRtpPort;
+                }
             } catch (Exception e) {
                 respond(out, 500, "Internal Error", cseq, ""); return;
             }
             respond(out, 200, "OK", cseq,
-                    "Transport: RTP/AVP;unicast;client_port=" + clientRtpPort + "-" + (clientRtpPort + 1) +
-                    ";server_port=" + serverRtpPort + "-" + (serverRtpPort + 1) + "\r\n" +
+                    "Transport: RTP/AVP;unicast;client_port=" + clientPort + "-" + (clientPort + 1) +
+                    ";server_port=" + srvPort + "-" + (srvPort + 1) + "\r\n" +
                     "Session: " + sessionId + ";timeout=60\r\n");
         }
 
@@ -214,7 +254,10 @@ public class RtspServer {
                    "a=rtpmap:96 H264/90000\r\n" +
                    "a=fmtp:96 profile-level-id=42A01E;packetization-mode=1;" +
                    "sprop-parameter-sets=" + spsB64 + "," + ppsB64 + "\r\n" +
-                   "a=control:trackID=0\r\n";
+                   "a=control:trackID=0\r\n" +
+                   "m=application 0 RTP/AVP 97\r\n" +
+                   "a=rtpmap:97 smpte336m/90000\r\n" +
+                   "a=control:trackID=1\r\n";
         }
 
         // ── RTP ───────────────────────────────────────────────────────────────
@@ -231,10 +274,21 @@ public class RtspServer {
             int len = data.length - off;
             if (len <= 0) return;
             if (len <= 1400) {
-                sendUdp(buildRtpPacket(data, off, len, seq, rtpTs, marker));
+                sendUdp(buildRtpPacket(data, off, len, seq, rtpTs, marker, (byte) 96, ssrc));
             } else {
                 fuA(data, off, len, rtpTs, seq, marker);
             }
+        }
+
+        /** One MISB KLV packet on the KLV track — always fits in a single RTP packet
+         *  (ST 0601 telemetry sets are well under the ~1400B split threshold), so no
+         *  FU-A fragmentation is needed the way large H.264 NALs require. */
+        void sendKlvUnit(byte[] klv, long rtpTs) {
+            if (klvUdpSocket == null || !active) return;
+            int seq = klvSeq++;
+            byte[] p = buildRtpPacket(klv, 0, klv.length, seq, rtpTs, true, (byte) 97, klvSsrc);
+            try { klvUdpSocket.send(new DatagramPacket(p, p.length, clientAddr, klvClientRtpPort)); }
+            catch (IOException e) { Log.w(TAG, "KLV UDP: " + e.getMessage()); }
         }
 
         private void fuA(byte[] d, int off, int len, long ts, int seq, boolean lastMark) {
@@ -251,20 +305,21 @@ public class RtspServer {
                 byte[] payload = new byte[2 + chunk];
                 payload[0] = fuInd; payload[1] = fuHdr;
                 System.arraycopy(d, pos, payload, 2, chunk);
-                sendUdp(buildRtpPacket(payload, 0, payload.length, seq, ts, last && lastMark));
+                sendUdp(buildRtpPacket(payload, 0, payload.length, seq, ts, last && lastMark, (byte) 96, ssrc));
                 first = false; pos += chunk;
             }
         }
 
-        private byte[] buildRtpPacket(byte[] d, int off, int len, int seq, long ts, boolean marker) {
+        private byte[] buildRtpPacket(byte[] d, int off, int len, int seq, long ts, boolean marker,
+                byte payloadType, int packetSsrc) {
             byte[] p = new byte[12 + len];
             p[0]  = (byte) 0x80;
-            p[1]  = (byte) ((marker ? 0x80 : 0) | 96);
+            p[1]  = (byte) ((marker ? 0x80 : 0) | payloadType);
             p[2]  = (byte) (seq >> 8);    p[3]  = (byte) (seq & 0xFF);
             p[4]  = (byte) (ts  >> 24);   p[5]  = (byte) (ts  >> 16);
             p[6]  = (byte) (ts  >>  8);   p[7]  = (byte) (ts  & 0xFF);
-            p[8]  = (byte) (ssrc >> 24);  p[9]  = (byte) (ssrc >> 16);
-            p[10] = (byte) (ssrc >>  8);  p[11] = (byte) (ssrc & 0xFF);
+            p[8]  = (byte) (packetSsrc >> 24);  p[9]  = (byte) (packetSsrc >> 16);
+            p[10] = (byte) (packetSsrc >>  8);  p[11] = (byte) (packetSsrc & 0xFF);
             System.arraycopy(d, off, p, 12, len);
             return p;
         }
@@ -288,8 +343,9 @@ public class RtspServer {
         void close() {
             active = false; playing = false;
             if (listener != null) listener.onClientDisconnected();
-            try { if (socket    != null) socket.close();    } catch (IOException ignored) {}
-            try { if (udpSocket != null) udpSocket.close(); } catch (Exception  ignored) {}
+            try { if (socket       != null) socket.close();       } catch (IOException ignored) {}
+            try { if (udpSocket    != null) udpSocket.close();    } catch (Exception  ignored) {}
+            try { if (klvUdpSocket != null) klvUdpSocket.close(); } catch (Exception  ignored) {}
             clients.remove(this);
         }
 

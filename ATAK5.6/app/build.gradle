@@ -203,7 +203,9 @@ android {
             }
         } else {
             ndk {
-                abiFilters "armeabi-v7a", "arm64-v8a", "x86"
+                // Spike: arm64-v8a only (the test device) to keep the libwebrtc .so small
+                // and the install fast. Restore the full set before release.
+                abiFilters "arm64-v8a"
             }
         }
     }
@@ -255,6 +257,10 @@ dependencies {
     // Pure-Java core only — no zxing-android-embedded — the scan UI is our own
     // Camera2 TextureView, matching how capture/CameraSource already works.
     implementation 'com.google.zxing:core:3.5.3'
+
+    // WebRTC (libwebrtc) for the reliable P2P transport — ICE/STUN/TURN NAT traversal.
+    // Bundles a native .so; Phase 0 spike confirms it loads inside ATAK's plugin process.
+    implementation 'io.github.webrtc-sdk:android:125.6422.07'
 
     testImplementation 'junit:junit:4.13.2'
 }

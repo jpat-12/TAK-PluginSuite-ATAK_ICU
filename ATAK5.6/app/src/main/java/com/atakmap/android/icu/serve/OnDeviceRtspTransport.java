@@ -39,6 +39,11 @@ public class OnDeviceRtspTransport implements Transport {
     }
 
     @Override
+    public void onKlv(byte[] klvPacket, long ptsUs) {
+        server.sendKlvUnit(klvPacket, ptsUs);
+    }
+
+    @Override
     public void stop() {
         started = false;
         server.stop();

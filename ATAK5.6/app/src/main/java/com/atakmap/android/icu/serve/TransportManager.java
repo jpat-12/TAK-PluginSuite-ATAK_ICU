@@ -71,6 +71,12 @@ public class TransportManager implements CapturePipeline.Sink {
         for (Transport t : transports) t.onAudioSample(aac, ptsUs);
     }
 
+    /** Fed by {@code share.KlvTelemetryEmitter}, not by {@link CapturePipeline} — KLV is
+     *  synthesized from position/orientation sensors, not derived from the encoder. */
+    public void onKlv(byte[] klvPacket, long ptsUs) {
+        for (Transport t : transports) t.onKlv(klvPacket, ptsUs);
+    }
+
     // ── Status ──────────────────────────────────────────────────────────────────
 
     /** De-duplicated list of every viewable endpoint across all transports. */
