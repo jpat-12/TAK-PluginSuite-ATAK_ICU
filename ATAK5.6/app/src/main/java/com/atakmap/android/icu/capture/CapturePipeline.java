@@ -65,7 +65,8 @@ public class CapturePipeline {
 
         // Size capture/encode to the sensor's native aspect (at the chosen quality height)
         // so the stream keeps the camera's true proportions — no forced-16:9 crop or stretch.
-        int[] cap = CameraSource.chooseNativeCaptureSize(ctx, config.useFrontCamera, config.resolution.h);
+        int[] cap = CameraSource.chooseNativeCaptureSize(
+                ctx, config.cameraId, config.useFrontCamera, config.resolution.h);
         config.captureW = cap[0];
         config.captureH = cap[1];
         Log.d(TAG, "native capture size " + config.captureW + "x" + config.captureH);

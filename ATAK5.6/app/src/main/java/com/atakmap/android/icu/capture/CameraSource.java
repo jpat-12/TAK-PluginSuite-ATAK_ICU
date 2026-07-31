@@ -42,6 +42,50 @@ public class CameraSource {
         void onError(String message);
     }
 
+    /** One Camera2 device as reported by {@link #listCameras}. */
+    public static class CameraOption {
+        public final String id;
+        public final String label;
+        public final int facing;   // CameraCharacteristics.LENS_FACING_*
+        CameraOption(String id, String label, int facing) {
+            this.id = id; this.label = label; this.facing = facing;
+        }
+    }
+
+    /**
+     * Enumerate every camera Camera2 exposes, including USB/UVC webcams that the OS
+     * surfaces as {@code LENS_FACING_EXTERNAL} devices (some Android builds with USB
+     * host + UVC support auto-register a plugged-in camera this way — no vendor SDK
+     * needed). Returns an empty list on any CameraManager failure.
+     */
+    public static List<CameraOption> listCameras(Context ctx) {
+        List<CameraOption> out = new ArrayList<>();
+        try {
+            CameraManager manager = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
+            String[] ids = manager.getCameraIdList();
+            int externalCount = 0;
+            for (String id : ids) {
+                CameraCharacteristics ch = manager.getCameraCharacteristics(id);
+                Integer facing = ch.get(CameraCharacteristics.LENS_FACING);
+                int f = facing != null ? facing : CameraCharacteristics.LENS_FACING_BACK;
+                String label;
+                if (f == CameraCharacteristics.LENS_FACING_FRONT) {
+                    label = "Front camera";
+                } else if (f == CameraCharacteristics.LENS_FACING_EXTERNAL) {
+                    externalCount++;
+                    label = externalCount > 1
+                            ? "External camera (USB) " + externalCount : "External camera (USB)";
+                } else {
+                    label = "Rear camera";
+                }
+                out.add(new CameraOption(id, label, f));
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "listCameras: " + e.getMessage());
+        }
+        return out;
+    }
+
     /** Result of a still capture (JPEG bytes), delivered off the camera thread. */
     public interface StillCallback {
         void onStill(byte[] jpeg);
@@ -105,7 +149,7 @@ public class CameraSource {
 
         CameraManager manager = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
         try {
-            String cameraId = selectCamera(manager, config.useFrontCamera);
+            String cameraId = selectCamera(manager, config);
             if (cameraId == null) { cb.onError("No camera found"); return; }
             if (!cameraLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
                 cb.onError("Timed out acquiring camera");
@@ -236,9 +280,10 @@ public class CameraSource {
         }
     }
 
-    private String selectCamera(CameraManager manager, boolean useFront)
+    private String selectCamera(CameraManager manager, EncoderConfig config)
             throws CameraAccessException {
-        String id = findCameraId(manager, useFront);
+        String id = (config.cameraId != null && !config.cameraId.isEmpty())
+                ? config.cameraId : findCameraId(manager, config.useFrontCamera);
         if (id != null) {
             android.hardware.camera2.CameraCharacteristics ch = manager.getCameraCharacteristics(id);
             Integer so = ch.get(CameraCharacteristics.SENSOR_ORIENTATION);
@@ -269,10 +314,16 @@ public class CameraSource {
      * Falls back to {@code targetHeight}×16:9 if characteristics are unavailable.
      */
     public static int[] chooseNativeCaptureSize(Context ctx, boolean useFront, int targetHeight) {
+        return chooseNativeCaptureSize(ctx, null, useFront, targetHeight);
+    }
+
+    /** Overload that pins the query to a specific camera id (e.g. an external/USB camera)
+     *  when {@code cameraId} is non-empty; otherwise falls back to the front/back logic. */
+    public static int[] chooseNativeCaptureSize(Context ctx, String cameraId, boolean useFront, int targetHeight) {
         int fbH = targetHeight, fbW = (targetHeight * 16) / 9;
         try {
             CameraManager m = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
-            String id = findCameraId(m, useFront);
+            String id = (cameraId != null && !cameraId.isEmpty()) ? cameraId : findCameraId(m, useFront);
             if (id == null) return new int[]{ fbW, fbH };
             CameraCharacteristics ch = m.getCameraCharacteristics(id);
 

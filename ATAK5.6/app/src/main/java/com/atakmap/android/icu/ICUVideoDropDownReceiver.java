@@ -663,14 +663,40 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             final CharSequence[] resOpts  = pta(R.array.icu_resolutions);
             final CharSequence[] fpsOpts  = pta(R.array.icu_framerates);
             final CharSequence[] rotOpts  = pta(R.array.icu_rotations);
-            final CharSequence[] camOpts  = pta(R.array.icu_cameras);
+
+            // Camera list is built live from Camera2 (not a static string-array) so a
+            // plugged-in USB/UVC camera that Android surfaces as LENS_FACING_EXTERNAL
+            // shows up automatically alongside the built-in front/back cameras.
+            final List<CameraSource.CameraOption> camList = CameraSource.listCameras(ctx);
+            final CharSequence[] camOpts;
+            if (camList.isEmpty()) {
+                camOpts = pta(R.array.icu_cameras);   // fallback: legacy front/back toggle
+            } else {
+                camOpts = new CharSequence[camList.size()];
+                for (int i = 0; i < camList.size(); i++) camOpts[i] = camList.get(i).label;
+            }
 
             sel[0] = serverConfig.destination == MediaServerConfig.Destination.SERVER ? 1 : 0;
             sel[1] = config.resolution.ordinal();
             sel[2] = fpsIndex(config.fps);
             sel[3] = rotationIndex(config.rotationDegrees);
             sel[4] = serverConfig.pushProtocol.ordinal();
-            sel[5] = config.useFrontCamera ? 1 : 0;
+            sel[5] = 0;
+            if (!camList.isEmpty()) {
+                // Prefer an exact id match (from a prior save); otherwise fall back to
+                // the legacy front/back preference so upgrades keep their old choice.
+                int idIdx = -1, facingIdx = -1;
+                for (int i = 0; i < camList.size(); i++) {
+                    CameraSource.CameraOption opt = camList.get(i);
+                    if (opt.id.equals(config.cameraId)) { idIdx = i; break; }
+                    boolean wantFront = config.useFrontCamera;
+                    boolean isFront = opt.facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT;
+                    if (facingIdx < 0 && isFront == wantFront) facingIdx = i;
+                }
+                sel[5] = idIdx >= 0 ? idIdx : Math.max(facingIdx, 0);
+            } else {
+                sel[5] = config.useFrontCamera ? 1 : 0;
+            }
             // Staged like the rest of the fields — only committed to serverConfig on Save.
             final String[] scannedPassphrase = {serverConfig.srtPassphrase};
 
@@ -829,7 +855,16 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 config.fps = intOf(fpsOpts[sel[2]].toString(), 30);
                 config.bitrateKbps = intOf(bitrate, 2500);
                 config.rotationDegrees = rotationValue(sel[3]);
-                config.useFrontCamera = sel[5] == 1;
+                if (!camList.isEmpty()) {
+                    CameraSource.CameraOption opt = camList.get(
+                            Math.max(0, Math.min(sel[5], camList.size() - 1)));
+                    config.cameraId = opt.id;
+                    config.useFrontCamera =
+                            opt.facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT;
+                } else {
+                    config.cameraId = "";
+                    config.useFrontCamera = sel[5] == 1;
+                }
                 config.gopSeconds = gopVals[gopSel[0]];
                 config.fovRefreshSec = Math.max(1, intOf(fovRefresh, 3));
                 config.fovRangeM = Math.max(1, intOf(fovRange, 100));

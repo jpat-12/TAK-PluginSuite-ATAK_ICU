@@ -33,6 +33,14 @@ public class EncoderConfig {
     public boolean    useFrontCamera = false;
 
     /**
+     * Camera2 id to open, as reported by {@link CameraSource#listCameras}. Empty = auto
+     * (pick front/back per {@link #useFrontCamera}, the pre-existing behavior). Set to a
+     * specific id — including a {@code LENS_FACING_EXTERNAL} device, i.e. a USB/UVC camera
+     * the OS already exposes through Camera2 — to pin the capture source to it.
+     */
+    public String cameraId = "";
+
+    /**
      * Extra rotation applied to the preview (and, best-effort, the encoded stream).
      * -1 = Auto (derive from sensor + display); otherwise 0/90/180/270.
      * Manual override exists because some devices show inverted video in landscape.
