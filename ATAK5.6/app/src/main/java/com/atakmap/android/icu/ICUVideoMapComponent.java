@@ -51,9 +51,16 @@ public class ICUVideoMapComponent extends AbstractWidgetMapComponent {
         radialMenu.register();
 
         // Phase 0 spike: confirm libwebrtc's native lib loads inside ATAK's plugin process.
+        // It has: the library loads under the plugin classloader and PeerConnectionFactory
+        // constructs. Debug-only from here — the answer is known, and building then disposing
+        // a factory on every ATAK start is pure cost in a shipped build. Keep it available
+        // while the real transport is written, then delete it with the rest of the spike.
+        //
         // Hand it the MapView's (host ATAK) context, not the plugin one — the plugin context
         // has no application context, and libwebrtc's ContextUtils.initialize rejects null.
-        com.atakmap.android.icu.serve.p2p.P2pProbe.run(mapView.getContext());
+        if (com.atakmap.android.icu.plugin.BuildConfig.DEBUG) {
+            com.atakmap.android.icu.serve.p2p.P2pProbe.run(mapView.getContext());
+        }
     }
 
     @Override
