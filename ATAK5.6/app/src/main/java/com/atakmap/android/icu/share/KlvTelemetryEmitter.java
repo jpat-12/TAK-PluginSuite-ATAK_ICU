@@ -39,6 +39,17 @@ public class KlvTelemetryEmitter implements SensorEventListener {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
 
+    /**
+     * Carries the finished packet out to the transports off the UI thread.
+     *
+     * <p>{@code RtspServer.sendKlvUnit} ends in a blocking {@code DatagramSocket.send}, and
+     * Android's StrictMode throws {@link android.os.NetworkOnMainThreadException} for network
+     * I/O on the main looper — which silently dropped every telemetry packet ever emitted.
+     * The 1 Hz tick still samples the self marker and sensors on the main thread, where
+     * ATAK's map objects expect to be touched; only the send is moved here.</p>
+     */
+    private java.util.concurrent.ExecutorService sender;
+
     private SensorManager sensorManager;
     private Sensor rotationSensor;
     private final float[] rotationMatrix = new float[9];
@@ -58,6 +69,7 @@ public class KlvTelemetryEmitter implements SensorEventListener {
         this.transports = transports;
         if (sensorName != null && !sensorName.trim().isEmpty()) this.sensorName = sensorName.trim();
         active = true;
+        sender = java.util.concurrent.Executors.newSingleThreadExecutor();
 
         sensorManager = (SensorManager) ctx.getSystemService(Context.SENSOR_SERVICE);
         if (sensorManager != null) {
@@ -72,6 +84,7 @@ public class KlvTelemetryEmitter implements SensorEventListener {
         if (!active) return;
         active = false;
         handler.removeCallbacks(tick);
+        if (sender != null) { sender.shutdownNow(); sender = null; }
         if (sensorManager != null) sensorManager.unregisterListener(this);
         sensorManager = null;
         rotationSensor = null;
@@ -82,7 +95,10 @@ public class KlvTelemetryEmitter implements SensorEventListener {
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (!active) return;
-            try { emit(); } catch (Exception e) { Log.w(TAG, "emit: " + e.getMessage()); }
+            // Log the throwable, not just its message: this fires once a second, and an
+            // NPE's message is null on Android, so message-only logging says nothing at all
+            // about where telemetry is failing.
+            try { emit(); } catch (Exception e) { Log.w(TAG, "emit failed", e); }
             handler.postDelayed(this, INTERVAL_MS);
         }
     };
@@ -100,9 +116,20 @@ public class KlvTelemetryEmitter implements SensorEventListener {
         double alt = p.getAltitude();
         if (Double.isNaN(alt)) alt = 0;
 
-        byte[] klv = KlvEncoder.build(p.getLatitude(), p.getLongitude(), alt,
+        final byte[] klv = KlvEncoder.build(p.getLatitude(), p.getLongitude(), alt,
                 heading, pitchDeg, rollDeg, HFOV_DEG, VFOV_DEG, sensorName);
-        transports.onKlv(klv, System.nanoTime() / 1000L);
+        final long ptsUs = System.nanoTime() / 1000L;
+        final TransportManager sinks = transports;
+        java.util.concurrent.ExecutorService s = sender;
+        if (s == null || s.isShutdown()) return;
+        s.execute(new Runnable() {
+            @Override public void run() {
+                // Never let a transport failure kill the emitter thread — the next sample
+                // is only a second away.
+                try { sinks.onKlv(klv, ptsUs); }
+                catch (Exception e) { Log.w(TAG, "klv send failed", e); }
+            }
+        });
     }
 
     // ── SensorEventListener ──────────────────────────────────────────────────────
