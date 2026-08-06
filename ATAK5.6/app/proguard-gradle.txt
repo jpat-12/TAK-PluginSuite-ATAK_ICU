@@ -94,6 +94,16 @@
 ## dontwarn and keep directives
 ######################################################################
 
+# libwebrtc (io.github.webrtc-sdk:android) — the native library resolves Java classes by
+# literal name through JNI FindClass, so R8 renaming them is not a warning, it is a hard
+# abort: FindClass fails, the pending ClassNotFoundException hits JNI NewGlobalRef, and ART
+# kills the whole ATAK process with SIGABRT. Observed on org.webrtc.WebRtcClassLoader, which
+# R8 had shortened to org.webrtc.w0. Keeping names for the package is the documented
+# requirement, not an optimization choice.
+-keep class org.webrtc.** { *; }
+-keepclassmembers class org.webrtc.** { *; }
+-dontwarn org.webrtc.**
+
 # UVCAndroid (com.herohan:UVCAndroid) — required keep rules from its README; the library
 # talks to native code via reflection/JNI so R8 must not rename or strip these.
 -keep class com.herohan.uvcapp.** { *; }

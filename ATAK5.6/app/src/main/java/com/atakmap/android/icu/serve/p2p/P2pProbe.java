@@ -28,9 +28,17 @@ public final class P2pProbe {
     public static void run(final Context ctx) {
         new Thread(() -> {
             try {
+                // A plugin Context returns null from getApplicationContext(), and
+                // ContextUtils.initialize throws on null — which aborted this probe before
+                // it ever reached the native load, making the result meaningless. Callers
+                // should pass the host (MapView) context; fall back to whatever we were
+                // given rather than handing libwebrtc a null.
+                Context appCtx = ctx.getApplicationContext();
+                if (appCtx == null) appCtx = ctx;
+                Log.d(TAG, "initializing with context: " + appCtx.getClass().getName());
                 PeerConnectionFactory.initialize(
                         PeerConnectionFactory.InitializationOptions
-                                .builder(ctx.getApplicationContext())
+                                .builder(appCtx)
                                 .createInitializationOptions());
                 PeerConnectionFactory factory =
                         PeerConnectionFactory.builder().createPeerConnectionFactory();
