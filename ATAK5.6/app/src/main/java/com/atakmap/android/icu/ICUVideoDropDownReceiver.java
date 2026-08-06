@@ -111,6 +111,8 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     private ImageButton settingsButton;
     private TextureView previewView;
     private volatile Surface previewSurface;
+    /** Camera/resolution selection the cached captureW/H belong to; see sizePreviewBuffer. */
+    private String      captureSizeKey = "";
 
     // Settings page (pushed overlay) — see showSettingsPage()/hideSettingsPage().
     private View        settingsPage;
@@ -174,6 +176,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
         previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override public void onSurfaceTextureAvailable(SurfaceTexture st, int w, int h) {
+                sizePreviewBuffer(st);
                 previewSurface = new Surface(st);
                 applyPreviewRotation();
                 // Re-attach preview to an already-running capture session (dropdown reopened
@@ -181,6 +184,13 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 pipeline.setPreviewSurface(previewSurface);
             }
             @Override public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) {
+                // TextureView resets the buffer to the new view size on every layout pass,
+                // so re-pin it — but do NOT rebuild the capture session here. A live session
+                // has already latched its buffer size (Camera2 sizes the producer itself, so
+                // the reset can't affect the running stream), and rebuilding on every layout
+                // tick thrashes the camera into a frozen preview. The pin only has to be
+                // right before the *next* configuration, which happens on attach/start.
+                sizePreviewBuffer(st);
                 applyPreviewRotation();
             }
             @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture st) {
@@ -193,6 +203,41 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             }
             @Override public void onSurfaceTextureUpdated(SurfaceTexture st) {}
         });
+    }
+
+    /**
+     * Pin the preview's buffer to the same size the encoder captures at.
+     *
+     * <p>Camera2 gives each output stream the sensor's full field of view only when that
+     * output's aspect ratio matches the native (full-FOV) aspect; anything else is
+     * <b>center-cropped</b> to fit. Left alone, a TextureView's SurfaceTexture defaults its
+     * buffer to the on-screen view size — the drop-down pane's shape — so the camera picked a
+     * differently-shaped preview stream and the operator saw a narrower, zoomed-in view than
+     * what was actually going out on the wire (the encoder path is explicitly sized to the
+     * native aspect in {@code GlRotationPipe}). Sizing the preview buffer to
+     * {@code captureW×captureH} puts both outputs on one FOV, so the pane shows the real
+     * broadcast frame.</p>
+     *
+     * <p>Must be called <i>before</i> the Surface is handed to the capture session — the size
+     * is latched at session configuration.</p>
+     */
+    private void sizePreviewBuffer(SurfaceTexture st) {
+        // While running, captureW/H are already authoritative (set by CapturePipeline.start);
+        // re-resolving would be redundant and could disagree with the live encoder.
+        if (!pipeline.isRunning()) {
+            // This runs on layout passes, so memoize — resolving hits CameraManager and the
+            // answer only moves when the camera or resolution selection does.
+            String key = config.cameraId + "|" + config.useFrontCamera + "|" + config.resolution;
+            if (!key.equals(captureSizeKey)) {
+                try {
+                    CapturePipeline.resolveCaptureSize(atakContext(), config);
+                    captureSizeKey = key;
+                } catch (Exception e) {
+                    Log.w(TAG, "resolveCaptureSize: " + e.getMessage());
+                }
+            }
+        }
+        st.setDefaultBufferSize(config.captureW, config.captureH);
     }
 
     /** Rotate the preview upright and letterbox it to the source aspect ratio. Manual
@@ -301,6 +346,12 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         transports.startAll(config);
 
         pipeline.setSink(transports);
+        // The pane's buffer was sized for whatever camera/resolution was selected when the
+        // surface appeared; settings may have changed since. Re-pin it to the size this run
+        // will actually capture at, before the session latches it.
+        if (previewView != null && previewView.getSurfaceTexture() != null) {
+            sizePreviewBuffer(previewView.getSurfaceTexture());
+        }
         pipeline.start(atakContext(), config, previewSurface, new CapturePipeline.Listener() {
             @Override public void onStarted() {
                 ui.post(() -> {
@@ -331,11 +382,21 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     }
                     statusWidget.setStreaming(true);
                     updateLiveStatus(0);
+                    // UsbCameraSource reports "open" as soon as the UVC device accepts
+                    // startPreview, which isn't proof that frames follow — a camera can sit
+                    // there delivering nothing and raise no error at all. Watch for the
+                    // first encoded frame and fall back if none arrives.
+                    armFeedWatchdog();
                 });
             }
             @Override public void onError(String message) {
                 Log.w(TAG, "capture error: " + message);
                 ui.post(() -> {
+                    // A USB camera that never showed up, lost permission, or was unplugged
+                    // mid-stream shouldn't end the broadcast — drop back to the built-in
+                    // camera and keep the operator on the air.
+                    if (shouldFallBackFromUsb()) { fallbackToDeviceCamera(message); return; }
+                    cancelFeedWatchdog();
                     sensor.stop();
                     klv.stop();
                     if (transports != null) transports.stopAll();
@@ -346,12 +407,78 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 });
             }
             @Override public void onFrame(int totalNalUnits) {
+                // First encoded NAL = the source is genuinely delivering frames.
+                if (totalNalUnits == 1) ui.post(ICUVideoDropDownReceiver.this::cancelFeedWatchdog);
                 if (totalNalUnits % 30 == 0) ui.post(() -> updateLiveStatus(totalNalUnits));
+            }
+            @Override public void onSourceOpened() {
+                ui.post(ICUVideoDropDownReceiver.this::armFeedWatchdog);
             }
         });
     }
 
+    // ── USB camera fallback ──────────────────────────────────────────────────────
+
+    /** How long to wait for the first encoded frame before declaring the USB source dead.
+     *  Generous: UVC enumeration + the OS permission prompt can eat several seconds. */
+    private static final long USB_FEED_TIMEOUT_MS = 8000;
+
+    /** Set once this broadcast has already fallen back, so a built-in camera that also
+     *  fails reports normally instead of looping. Cleared by {@link #stopBroadcast}. */
+    private boolean  usbFallbackUsed;
+    private Runnable feedWatchdog;
+
+    /** True when a USB-sourced broadcast is live and hasn't already used its one fallback. */
+    private boolean shouldFallBackFromUsb() {
+        return !usbFallbackUsed
+                && EncoderConfig.CAMERA_ID_USB.equals(config.cameraId)
+                && transports != null;   // a broadcast we started, not a stale callback
+    }
+
+    private void armFeedWatchdog() {
+        cancelFeedWatchdog();
+        if (!EncoderConfig.CAMERA_ID_USB.equals(config.cameraId)) return;
+        feedWatchdog = () -> {
+            feedWatchdog = null;
+            if (shouldFallBackFromUsb()) fallbackToDeviceCamera("no video from the USB camera");
+        };
+        ui.postDelayed(feedWatchdog, USB_FEED_TIMEOUT_MS);
+    }
+
+    private void cancelFeedWatchdog() {
+        if (feedWatchdog != null) { ui.removeCallbacks(feedWatchdog); feedWatchdog = null; }
+    }
+
+    /**
+     * Swap a dead USB source for the phone's own camera and resume broadcasting.
+     *
+     * <p>Restarts the whole pipeline rather than hot-swapping the source: the encoder and GL
+     * stage are sized to the capture dimensions, and the built-in camera's differ from the
+     * USB path's, so new SPS/PPS have to be signalled. Viewers will need to reconnect —
+     * still better than a stream that silently dies when a cable comes loose.</p>
+     *
+     * <p>The change is deliberately <b>not</b> persisted: the operator's saved choice stays
+     * "USB camera", so plugging the camera back in and starting again retries it.</p>
+     */
+    private void fallbackToDeviceCamera(String why) {
+        Log.w(TAG, "USB camera unusable (" + why + ") — falling back to the built-in camera");
+        cancelFeedWatchdog();
+        stopBroadcast();
+        // After stopBroadcast, which clears the flag — this restart is the one fallback.
+        usbFallbackUsed = true;
+        config.cameraId      = "";      // auto — front/back per useFrontCamera
+        config.useFrontCamera = false;  // rear: the sensible default for a mounted feed
+        captureSizeKey       = "";      // force a re-resolve for the new source
+        setStatus("USB camera unavailable — switching to the built-in camera…");
+        Toast.makeText(pluginContext,
+                "USB camera unavailable (" + why + ") — switched to the built-in camera",
+                Toast.LENGTH_LONG).show();
+        startBroadcast();
+    }
+
     private void stopBroadcast() {
+        cancelFeedWatchdog();
+        usbFallbackUsed = false;
         sensor.stop();                       // revert self marker to the user's prefs
         klv.stop();
         // Flip the server feed inactive (can't DELETE it with an EUD cert).

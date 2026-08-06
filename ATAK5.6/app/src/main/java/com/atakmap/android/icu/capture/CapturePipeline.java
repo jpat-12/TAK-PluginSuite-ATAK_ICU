@@ -24,6 +24,14 @@ public class CapturePipeline {
         void onError(String message);
         /** Periodic-ish callback as encoded frames flow — useful for a Phase 1 sanity readout. */
         void onFrame(int totalNalUnits);
+        /**
+         * The capture source finished opening its device. Only the USB/UVC path fires this
+         * (Camera2 is already open by the time {@link #onStarted} runs); it can land well
+         * after {@code onStarted} because enumeration and the OS permission prompt are async.
+         * Frames are <b>not</b> guaranteed to follow — a UVC device can accept startPreview
+         * and then deliver nothing — so it marks where a no-feed timeout should start.
+         */
+        default void onSourceOpened() {}
     }
 
     /**
@@ -58,6 +66,23 @@ public class CapturePipeline {
     public void setSink(Sink sink) { this.sink = sink; }
 
     /**
+     * Populate {@code config.captureW/H} — the landscape capture/encode size — for the
+     * currently configured camera. USB/UVC cameras aren't queryable via Camera2
+     * characteristics, so they get the same 16:9-at-target-height fallback
+     * {@link CameraSource#chooseNativeCaptureSize} itself uses when no camera info is
+     * available. Idempotent and safe to call before {@link #start}; the pane calls it to
+     * size the preview buffer to the same aspect the encoder will use.
+     */
+    public static void resolveCaptureSize(Context ctx, EncoderConfig config) {
+        int[] cap = EncoderConfig.CAMERA_ID_USB.equals(config.cameraId)
+                ? new int[]{ (config.resolution.h * 16) / 9, config.resolution.h }
+                : CameraSource.chooseNativeCaptureSize(
+                        ctx, config.cameraId, config.useFrontCamera, config.resolution.h);
+        config.captureW = cap[0];
+        config.captureH = cap[1];
+    }
+
+    /**
      * Start capture + encode. Preview may be null (encoder-only).
      * The caller must already hold {@code android.permission.CAMERA}.
      */
@@ -66,15 +91,7 @@ public class CapturePipeline {
         nalCount.set(0);
         usingUsbCamera = EncoderConfig.CAMERA_ID_USB.equals(config.cameraId);
 
-        // Size capture/encode. USB/UVC cameras aren't queryable via Camera2
-        // characteristics, so they get the same 16:9-at-target-height fallback
-        // chooseNativeCaptureSize itself uses when no camera info is available.
-        int[] cap = usingUsbCamera
-                ? new int[]{ (config.resolution.h * 16) / 9, config.resolution.h }
-                : CameraSource.chooseNativeCaptureSize(
-                        ctx, config.cameraId, config.useFrontCamera, config.resolution.h);
-        config.captureW = cap[0];
-        config.captureH = cap[1];
+        resolveCaptureSize(ctx, config);
         Log.d(TAG, "native capture size " + config.captureW + "x" + config.captureH);
 
         Surface encoderSurface = encoder.start(config, new H264Encoder.Callback() {
@@ -124,6 +141,12 @@ public class CapturePipeline {
                     running = false;
                     stop();
                     listener.onError(message);
+                }
+                @Override public void onOpened() {
+                    // Device is up — restart the caller's no-feed clock from here rather
+                    // than from onStarted, so a slow USB permission prompt isn't mistaken
+                    // for a camera that isn't delivering.
+                    listener.onSourceOpened();
                 }
             });
         } else {
