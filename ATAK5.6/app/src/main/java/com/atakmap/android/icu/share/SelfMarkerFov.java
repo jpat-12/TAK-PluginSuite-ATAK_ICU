@@ -223,9 +223,13 @@ public final class SelfMarkerFov {
         try {
             URI u = URI.create(url);
             if (u.getScheme() != null) protocol = u.getScheme().toLowerCase();
-            // Keep the userinfo in the address (user:pass@host) so the viewer authenticates.
-            if (u.getHost() != null)
-                address = (u.getUserInfo() != null ? u.getUserInfo() + "@" : "") + u.getHost();
+            // ConnectionEntry address is the bare host only — no userinfo. TAK clients
+            // reconstruct the connection as protocol://address:port/path, so embedding
+            // "user:pass@host" here yields a malformed address (TAK Aware reads this field
+            // literally). Credentials travel in the <__video url="..."> attribute above,
+            // which is where ATAK/CloudTAK pull them from. Matches StreamSensorMarker,
+            // SelfMarkerSensorController and the WinTAK CotBuilder ("address = host only").
+            if (u.getHost() != null)   address  = u.getHost();
             if (u.getPort() > 0)       port     = u.getPort();
             if (u.getPath() != null)   path     = u.getPath();
             tcp = "tcp".equalsIgnoreCase(u.getQuery());   // ?tcp → reliable RTSP-interleaved
