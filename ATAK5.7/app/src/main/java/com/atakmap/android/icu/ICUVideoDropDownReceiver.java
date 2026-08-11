@@ -41,6 +41,7 @@ import com.atakmap.android.icu.serve.TransportManager;
 import com.atakmap.android.icu.share.SelfMarkerFov;
 import com.atakmap.android.icu.ui.StreamStatusWidget;
 import com.atakmap.android.icu.ui.qr.QrScanDialog;
+import com.atakmap.android.icu.util.NetworkMonitor;
 import com.atakmap.android.icu.util.Prefs;
 import com.atakmap.android.icu.util.StreamUrlParser;
 import com.atakmap.android.maps.MapView;
@@ -100,6 +101,10 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     private final StreamStatusWidget statusWidget;
 
     private TransportManager transports;
+
+    // Watches for Wi-Fi/LTE handovers while live. A broadcast's outbound socket does not
+    // survive one; see onNetworkChanged.
+    private NetworkMonitor networkMonitor;
 
     private TextView    statusText;
     private int         defaultStatusColor;    // status text's normal colour (for reset after errors)
@@ -401,6 +406,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                         videoPublisher.publish(serverConfig, serverConfig.feedUuid);
                     }
                     statusWidget.setStreaming(true);
+                    startNetworkMonitor();
                     updateLiveStatus(0);
                     // UsbCameraSource reports "open" as soon as the UVC device accepts
                     // startPreview, which isn't proof that frames follow — a camera can sit
@@ -418,6 +424,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     if (shouldFallBackFromUsb()) { fallbackToDeviceCamera(message); return; }
                     cancelFeedWatchdog();
                     stopRecording(true);   // the encoder feeding it is gone
+                    stopNetworkMonitor();
                     sensor.stop();
                     klv.stop();
                     if (transports != null) transports.stopAll();
@@ -502,6 +509,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         // Recording rides this broadcast's encoder, so it ends with it — finalize the MP4
         // before the encoder goes away rather than leaving a truncated file.
         stopRecording(true);
+        stopNetworkMonitor();
         usbFallbackUsed = false;
         sensor.stop();                       // revert self marker to the user's prefs
         klv.stop();
@@ -553,6 +561,51 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             serverConfig.feedUuid = haveCs ? "ICU-" + cs : java.util.UUID.randomUUID().toString();
             Prefs.save(atakContext(), serverConfig, config);
         }
+    }
+
+    // ── Network handover ─────────────────────────────────────────────────────────
+    // Switching Wi-Fi to LTE (or hopping APs) kills every socket the broadcast holds: they
+    // are bound to an address the device no longer owns, and TCP has no idea its interface
+    // went away, so nothing recovers by itself. Left alone the encoder keeps running, the
+    // transports keep writing into dead sockets, and the pane keeps reporting LIVE while
+    // no viewer receives anything. We watch for the handover and redial instead.
+
+    private void startNetworkMonitor() {
+        if (networkMonitor != null) return;
+        networkMonitor = new NetworkMonitor(atakContext(), this::onNetworkChanged);
+        networkMonitor.start();
+    }
+
+    private void stopNetworkMonitor() {
+        if (networkMonitor != null) { networkMonitor.stop(); networkMonitor = null; }
+    }
+
+    /** The default network moved. Redial the transports and correct what we advertise. */
+    private void onNetworkChanged() {
+        if (!pipeline.isRunning()) return;   // stale callback after the broadcast ended
+        Log.d(TAG, "network changed while live — reconnecting transports");
+
+        // Let a fresh failure be reported: the previous broadcast-killing verdict, if any,
+        // was reached on a network that is no longer the one we are using.
+        authFailureHandled = false;
+
+        if (transports != null) transports.reconnectAll(config);
+
+        // On LAN the advertised URL embeds this device's own IP, which just changed, so
+        // peers are holding a link to an address that is no longer ours. Re-derive it and
+        // let the next FOV tick carry the correction out on the self report.
+        String url = advertisedEndpoint().url;
+        sensor.setUrl(url);
+
+        // Same for the server-side feed registration when pushing.
+        if (serverConfig.pushEnabled()
+                && serverConfig.feedUuid != null && !serverConfig.feedUuid.isEmpty()) {
+            videoPublisher.publish(serverConfig, serverConfig.feedUuid);
+        }
+
+        setStatus("Network changed — reconnecting…");
+        Toast.makeText(pluginContext, "Network changed — reconnecting the stream…",
+                Toast.LENGTH_SHORT).show();
     }
 
     private android.os.PowerManager.WakeLock wakeLock;
@@ -837,9 +890,18 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
         // A server push that failed (e.g. bad credentials) isn't reaching anyone, even
         // though the encoder keeps producing frames — so stop the broadcast outright
-        // instead of showing a false "LIVE".
+        // instead of showing a false "LIVE". Transports only report a failure once they
+        // have exhausted their redials, so a handover in progress doesn't land here.
         String failure = (transports != null) ? transports.failureReason() : null;
         if (failure != null) { handlePushFailure(failure); return; }
+
+        // Mid-redial: frames are being produced but nothing is reaching a viewer yet. Say
+        // so rather than showing LIVE over a connection that does not currently exist.
+        if (transports != null && transports.reconnecting()) {
+            setStatus("Reconnecting…");
+            liveDot.setVisibility(View.GONE);
+            return;
+        }
 
         int viewers = (transports != null) ? transports.totalViewers() : 0;
         StringBuilder s = new StringBuilder("LIVE · ").append(config.resolution.label);
@@ -1468,6 +1530,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     @Override
     protected void disposeImpl() {
         stopRecording(false);
+        stopNetworkMonitor();
         pipeline.stop();
         if (transports != null) { transports.stopAll(); transports = null; }
         sensor.stop();

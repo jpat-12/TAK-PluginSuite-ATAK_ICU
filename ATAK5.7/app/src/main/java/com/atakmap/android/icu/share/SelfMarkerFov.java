@@ -47,7 +47,7 @@ public final class SelfMarkerFov {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private volatile boolean active;
-    private String url;
+    private volatile String url;
     private String alias = "ATAK-ICU";
     private String videoUid;
     /** User-configured FOV refresh/force-send interval; set from EncoderConfig on start. */
@@ -58,6 +58,20 @@ public final class SelfMarkerFov {
 
     public void start(String videoUrl, String alias) {
         start(videoUrl, alias, (int) (DEFAULT_OUTBOUND_MS / 1000), (int) DEFAULT_RANGE_M);
+    }
+
+    /**
+     * Re-point the advertised feed mid-broadcast.
+     *
+     * <p>On the LAN transport the URL carries the device's own IP, so a network change
+     * silently invalidates it: peers keep receiving a link to an address that stopped being
+     * ours. The next outbound tick picks this up and re-sends, so the correction reaches
+     * peers within one FOV refresh interval rather than never.</p>
+     */
+    public void setUrl(String videoUrl) {
+        if (videoUrl == null || videoUrl.equals(url)) return;
+        Log.d(TAG, "advertised feed URL updated: " + url + " -> " + videoUrl);
+        this.url = videoUrl;
     }
 
     public void start(String videoUrl, String alias, int refreshSec, int rangeMeters) {

@@ -65,6 +65,8 @@ public class RtmpPublisher {
     private final CountDownLatch streamLatch  = new CountDownLatch(1);
 
     private volatile boolean ready;
+    /** Why the publish died, when it died on its own rather than being closed by us. */
+    private volatile String  failure;
     private volatile boolean seqHeaderSent;
     private volatile boolean sawKeyframe;
     private long baseTsUs = -1;
@@ -79,6 +81,10 @@ public class RtmpPublisher {
     }
 
     public boolean isReady() { return ready; }
+
+    /** Non-null when a write failed and closed the publish; null if it is healthy or we
+     *  closed it deliberately. Lets the transport log a real reason before redialing. */
+    public String failureReason() { return failure; }
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -142,7 +148,11 @@ public class RtmpPublisher {
         try {
             writeMessage(CSID_VIDEO, TYPE_VIDEO, streamId, tsMs, body.toByteArray());
         } catch (IOException e) {
+            // Typically the interface went away under us (Wi-Fi to LTE) or the server hung
+            // up. Record why before closing: the transport reads this to decide it needs to
+            // redial, instead of quietly dropping frames for the rest of the broadcast.
             Log.w(TAG, "sendVideo: " + e.getMessage());
+            failure = e.getMessage();
             close();
         }
     }

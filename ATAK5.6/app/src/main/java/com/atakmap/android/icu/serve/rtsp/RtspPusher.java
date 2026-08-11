@@ -51,6 +51,10 @@ public class RtspPusher {
     private byte[] sps, pps;
     private int rtpChannel = 0;          // interleaved RTP channel negotiated in SETUP
     private boolean sendErrLogged;       // throttle the "broken pipe" spam to one line
+    /** Set the first time an RTP write fails — the interface went away, or the server hung
+     *  up. The transport polls this to decide the publish is dead and needs redialing,
+     *  rather than going on writing into a socket that will never carry anything again. */
+    private volatile String sendFailure;
     private volatile boolean streaming;  // true after RECORD; gates the drain loop
     private Thread drainThread;          // reads/discards the server's inbound RTCP + keepalives
 
@@ -248,11 +252,19 @@ public class RtspPusher {
         } catch (IOException e) {
             if (!sendErrLogged) {
                 sendErrLogged = true;
-                Log.w(TAG, "sendNal failed (" + e.getMessage() + ") — server closed the RTP "
-                        + "connection after RECORD; stopping further log spam");
+                Log.w(TAG, "sendNal failed (" + e.getMessage() + ") — the RTP connection is "
+                        + "gone; flagging for redial and stopping further log spam");
             }
+            if (sendFailure == null) sendFailure = e.getMessage();
         }
     }
+
+    /** False once an RTP write has failed, i.e. this publish is finished and a new one has
+     *  to be dialed. Nothing here repairs itself in place. */
+    public boolean isAlive() { return sendFailure == null; }
+
+    /** Why the publish died, or null while healthy. */
+    public String failureReason() { return sendFailure; }
 
     private void sendRtp(byte[] nal, boolean marker, long ts) throws IOException {
         if (nal.length <= 1400) {

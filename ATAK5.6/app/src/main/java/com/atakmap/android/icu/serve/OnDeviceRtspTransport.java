@@ -49,6 +49,18 @@ public class OnDeviceRtspTransport implements Transport {
         server.stop();
     }
 
+    /**
+     * Nothing to redial: the listening socket is bound to the wildcard address, so it keeps
+     * accepting on whatever interface the device now has. What does change is the address
+     * peers must dial — {@link #endpoints()} re-derives it on every call, and the pane
+     * re-advertises it on the self marker after a network change.
+     *
+     * <p>Viewers connected over the old interface do have to reconnect. That half of the
+     * connection is theirs, and nothing on this side can repair it.</p>
+     */
+    @Override
+    public void reconnect(EncoderConfig config) { }
+
     @Override
     public List<StreamEndpoint> endpoints() {
         if (!started) return Collections.emptyList();

@@ -53,6 +53,28 @@ public class TransportManager implements CapturePipeline.Sink {
         }
     }
 
+    /**
+     * The default network moved. Tell every transport to drop whatever socket it is holding
+     * and dial again — the old one is bound to an interface that no longer exists and will
+     * never carry another byte. Returns immediately; transports redial in the background.
+     */
+    public void reconnectAll(EncoderConfig config) {
+        for (Transport t : transports) {
+            try {
+                t.reconnect(config);
+            } catch (Exception e) {
+                Log.w(TAG, "reconnect failed: " + t.name() + " — " + e.getMessage());
+            }
+        }
+    }
+
+    /** True while any transport is dialing and has nothing usable yet, so the pane can say
+     *  "reconnecting" instead of reporting a confident LIVE over a dead connection. */
+    public boolean reconnecting() {
+        for (Transport t : transports) if (t.isConnecting()) return true;
+        return false;
+    }
+
     // ── CapturePipeline.Sink ────────────────────────────────────────────────────
 
     @Override

@@ -48,6 +48,25 @@ public interface Transport {
 
     void stop();
 
+    /**
+     * The device's default network moved (Wi-Fi to LTE, an AP hop, and so on). Any socket
+     * this transport holds is bound to an address that no longer exists and will never
+     * recover, so drop it and dial again over the new network.
+     *
+     * <p>On-device servers ignore this: their listening socket is bound to the wildcard
+     * address and keeps accepting on whatever interface the device now has. Their viewers
+     * still have to reconnect, but that is the viewer's side of the connection, not ours.</p>
+     *
+     * <p>Implementations must return promptly — do the dialing on a background thread.</p>
+     */
+    default void reconnect(EncoderConfig config) {}
+
+    /**
+     * True while this transport is dialing or redialing and has no usable connection yet.
+     * Lets the pane say "reconnecting" instead of a confident "LIVE" during the gap.
+     */
+    default boolean isConnecting() { return false; }
+
     /** URL(s) viewers can use for this transport. May be empty until started. */
     List<StreamEndpoint> endpoints();
 

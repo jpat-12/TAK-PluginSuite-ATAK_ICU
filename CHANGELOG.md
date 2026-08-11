@@ -3,6 +3,33 @@
 ## Unreleased
 
 ### ATAK-ICU features (both 5.6 and 5.7 trees)
+- **The broadcast survives a network change.** Switching Wi-Fi to LTE, or hopping
+  between APs, used to end the stream permanently and say nothing: the outbound
+  socket is bound to an address the device no longer owns, TCP has no idea its
+  interface went away, and neither push transport had any reconnect path. The
+  encoder kept running, the transports kept writing into dead sockets, and the
+  pane kept reporting `LIVE` while no viewer received anything.
+  - A new `util/NetworkMonitor` watches the default network via
+    `ConnectivityManager` and reports real moves, debounced by 1.5s so the churn
+    of a handover doesn't trigger a dial over a network that is about to be
+    replaced.
+  - Both push transports now redial on an exponential backoff (1s doubling to a
+    15s cap, 8 attempts, roughly a minute of grace) and only report a terminal
+    `failureReason` once they give up. The attempt count resets whenever the
+    network moves again. RTSP auth failures still fail fast, since a rejected
+    credential will be rejected identically on every retry.
+  - Redials also cover a connection lost without a network change, e.g. the media
+    server restarting. `RtmpPublisher` and `RtspPusher` now record *why* a write
+    failed instead of silently closing, and the transports poll that to trigger a
+    dial rather than dropping frames for the rest of the broadcast.
+  - The pane shows `Reconnecting…` with the live dot off during the gap, instead
+    of a confident `LIVE` over a connection that does not exist.
+  - On LAN the advertised URL embeds the device's own IP, which the change
+    invalidates. It is now re-derived and pushed out on the self marker via
+    `SelfMarkerFov.setUrl`, so peers get a working link within one FOV refresh.
+- **Known limitation:** viewers already connected over the old interface still
+  have to reconnect themselves. That half of the connection is theirs, and
+  nothing on the broadcasting side can repair it.
 - **Local MP4 recording.** The Record button now works: it muxes the broadcast's
   own encoded H.264 (plus the AAC track when mic audio is on) into
   `ATAK ICU/recordings/ICU_<timestamp>.mp4` under ATAK's external files directory. It
