@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### ATAK-ICU features (both 5.6 and 5.7 trees)
+- **Local MP4 recording.** The Record button now works: it muxes the broadcast's
+  own encoded H.264 (plus the AAC track when mic audio is on) into
+  `ATAK ICU/recordings/ICU_<timestamp>.mp4` under ATAK's external files directory. It
+  attaches to the running capture pipeline as a second sink rather than opening a
+  second camera/encoder, so recording costs nothing beyond the mux and the file
+  matches what viewers saw frame-for-frame. Consequences, by design: recording
+  requires an active broadcast, it starts at the first keyframe after the tap (up
+  to one GOP later — MP4 can't open mid-GOP), and stopping or reconfiguring the
+  broadcast finalizes the file. The button shows a live `REC m:ss` elapsed readout
+  and turns red while recording.
+- **Blackout button in the operator pane**, next to Broadcast / Record / Snapshot.
+  Previously blackout was reachable only from the self-marker radial's **BLK/OUT**
+  button; it now sits in the pane's quick-action rail as well. Same behavior: the
+  screen is painted black at minimum brightness with the app still foreground, so
+  capture keeps running, and a tap anywhere wakes it.
+
+### ATAK-CIV 5.7 target
+- **New `ATAK5.7/` tree** — ATAK-ICU 2.5.0 ported to the ATAK-CIV 5.7.0.7 SDK.
+  `ATAK5.6/` is left in place, still building against 5.6.0. Both `civDebug` and
+  `civRelease` build clean on 5.7; runtime behavior is unverified on a 5.7 device.
+- **`ConnectionEntry` moved packages.** 5.7 drops the
+  `com.atakmap.android.video.ConnectionEntry` shim; `share/VideoConnectionPublisher`
+  now imports `gov.tak.api.video.ConnectionEntry`. This was the only source change
+  the SDK bump required.
+- Gradle wrapper 8.13 → 8.14.3, matching the 5.7 SDK samples. AGP 8.13.0,
+  `compileSdk 36`, Java 17, `minSdk 21` / `targetSdk 34` all unchanged.
+- `sdk.path` for 5.7 must point at the **inner** nested SDK directory; see
+  `ATAK5.7/local.properties.example`.
+
 ## 2.5.0 — 2026-08-06
 
 USB camera support, in-band KLV telemetry, and a set of capture fixes — two of

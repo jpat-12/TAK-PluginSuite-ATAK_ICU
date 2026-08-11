@@ -5,14 +5,14 @@
 // PLUGIN_VERSION is the common version name when describing the plugin.
 // ATAK_VERSION   is the version of ATAK this plugin is compatible with.
 //
-// Build config modeled on the QuickCapture plugin, retargeted to ATAK-CIV 5.6.0.
+// Build config modeled on the QuickCapture plugin, retargeted to ATAK-CIV 5.7.0.
 //
 ////////////////////////////////////////////////////////////////////////////////
 
 buildscript {
 
     ext.PLUGIN_VERSION = "2.5.2"
-    ext.ATAK_VERSION = '5.6.0'
+    ext.ATAK_VERSION = '5.7.0'
 
     def takdevVersion = '3.+'
 
