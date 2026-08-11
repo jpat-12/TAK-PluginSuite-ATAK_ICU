@@ -779,19 +779,37 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     new QrScanDialog(ctx, config.rotationDegrees, text -> {
                         try {
                             StreamUrlParser.Parsed p = StreamUrlParser.parse(text);
+                            // Only the server identity always comes from the QR. Every
+                            // other field is applied *only when the QR carries it*, so one
+                            // shared code can provision a whole fleet without clobbering
+                            // the per-device stream path and alias — which default to the
+                            // operator callsign (see defaultPath()/defaultAlias()) precisely
+                            // so operators don't collide on the server.
                             sel[0] = 1; destBtn.setText(destOpts[1]); srv.setVisibility(View.VISIBLE);
                             sel[4] = p.protocol.ordinal(); protoBtn.setText(protoOpts[sel[4]]);
                             address.setText(p.host);
                             port.setText(Integer.toString(p.port));
-                            path.setText(p.path);
                             String msg = "Filled in from QR: " + p.protocol + " " + p.host + ":" + p.port;
+                            if (p.path != null) {
+                                path.setText(p.path);
+                                msg += "/" + p.path;
+                            } else {
+                                msg += " — kept path \"" + str(path, defaultPath()) + "\"";
+                            }
                             if (p.passphrase != null) {
                                 scannedPassphrase[0] = p.passphrase;
                                 msg += " (passphrase captured)";
                             }
-                            if (p.name != null && !p.name.isEmpty()) {
+                            if (p.username != null) {
+                                user.setText(p.username);
+                                if (p.password != null) pass.setText(p.password);
+                                msg += " (credentials captured)";
+                            }
+                            if (p.name != null) {
                                 alias.setText(p.name);
                                 msg += " — \"" + p.name + "\"";
+                            } else {
+                                msg += " — kept alias \"" + str(alias, defaultAlias()) + "\"";
                             }
                             Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show();
                         } catch (IllegalArgumentException e) {
