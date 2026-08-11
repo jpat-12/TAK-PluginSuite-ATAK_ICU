@@ -17,7 +17,7 @@ using ICUVideoStreamer.Services;
 
 namespace ICUVideoStreamer
 {
-    [DockPane(ID, "ICU VideoStreamer", Content = typeof(VideoStreamView))]
+    [DockPane(ID, "WinTAK-ICU", Content = typeof(VideoStreamView))]
     [Export(typeof(IDockPane))]
     public class VideoStreamDockPane : DockPane
     {

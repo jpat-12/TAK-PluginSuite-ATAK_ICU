@@ -4,7 +4,7 @@
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" ResizeMode="NoResize" ShowActivated="False"
         SizeToContent="WidthAndHeight" Topmost="False"
-        ToolTip="ICU VideoStreamer — click to open, drag to move">
+        ToolTip="WinTAK-ICU — click to open, drag to move">
 
     <!-- Icon + status-dot badge + pulsing LIVE label, mirroring the ATAK StreamStatusWidget -->
     <Grid Margin="6" Cursor="Hand">
