@@ -1,0 +1,5 @@
+<!-- Green while broadcasting (shown next to "LIVE"). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="@color/icu_on" />
+    <size android:width="12dp" android:height="12dp" />
+</shape>

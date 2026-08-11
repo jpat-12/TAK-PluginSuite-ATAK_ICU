@@ -1,0 +1,13 @@
+<!-- Round button in the "recording/live" (danger) state. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="oval">
+            <solid android:color="#FF6659" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="@color/icu_danger" />
+        </shape>
+    </item>
+</selector>

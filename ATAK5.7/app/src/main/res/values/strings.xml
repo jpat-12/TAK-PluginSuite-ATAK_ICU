@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ICU VideoStreamer</string>
+    <string name="app_desc">Stream the phone camera into ATAK and broadcast it to other users over the local network/mesh or a media server.</string>
+
+    <string name="icu_status_idle">Idle — not broadcasting</string>
+    <string name="icu_status_live">LIVE</string>
+    <string name="icu_broadcast">Broadcast</string>
+    <string name="icu_stop">Stop</string>
+    <string name="icu_preview_placeholder">Camera preview</string>
+    <string name="icu_settings">Settings</string>
+    <string name="icu_record">Record</string>
+    <string name="icu_snapshot">Snapshot</string>
+
+    <!-- Settings -->
+    <string name="icu_settings_title">Broadcast Settings</string>
+    <string name="icu_scan_qr">Scan QR to Fill In Stream URL</string>
+    <string name="icu_alias">Broadcast Alias</string>
+    <string name="icu_destination">Destination Type</string>
+    <string name="icu_protocol">Push Protocol</string>
+    <string name="icu_address">Server Address</string>
+    <string name="icu_port">Port</string>
+    <string name="icu_path">Stream Path / Name</string>
+    <string name="icu_username">Username (optional)</string>
+    <string name="icu_password">Password (optional)</string>
+    <string name="icu_resolution">Resolution</string>
+    <string name="icu_framerate">Frame Rate</string>
+    <string name="icu_bitrate">Bitrate (kbps)</string>
+    <string name="icu_rotation">Orientation</string>
+    <string name="icu_camera">Camera</string>
+    <string name="icu_save">Save</string>
+    <string name="icu_cancel">Cancel</string>
+
+    <!-- Start/stop confirmation -->
+    <string name="icu_confirm_start_title">Start Broadcast?</string>
+    <string name="icu_confirm_stop_title">Stop Broadcast?</string>
+    <string name="icu_confirm_stop_msg">This stops the camera and drops the feed for anyone watching. Your self marker returns to normal.</string>
+    <string name="icu_start">Start</string>
+
+    <string-array name="icu_destinations">
+        <item>Local Area Network (this device)</item>
+        <item>Media Server, MediaMTX, TAK Restreamer</item>
+    </string-array>
+    <string-array name="icu_cameras">
+        <item>Rear camera</item>
+        <item>Front camera</item>
+    </string-array>
+    <string-array name="icu_protocols">
+        <item>RTMP</item>
+        <item>RTSP</item>
+        <item>SRT (needs native lib)</item>
+    </string-array>
+    <string-array name="icu_resolutions">
+        <item>480p</item>
+        <item>720p</item>
+        <item>1080p</item>
+    </string-array>
+    <string-array name="icu_framerates">
+        <item>15</item>
+        <item>24</item>
+        <item>30</item>
+    </string-array>
+    <!-- Order matches rotationIndex()/rotationValue() in ICUVideoDropDownReceiver:
+         Portrait=0°, Landscape=270°, Reverse Portrait=180°, Reverse Landscape=90°. -->
+    <string-array name="icu_rotations">
+        <item>Portrait</item>
+        <item>Landscape</item>
+        <item>Reverse Portrait</item>
+        <item>Reverse Landscape</item>
+    </string-array>
+</resources>

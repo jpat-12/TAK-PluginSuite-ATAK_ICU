@@ -1,0 +1,21 @@
+# Copy this file to local.properties and fill in paths for your machine.
+# local.properties is gitignored — never commit it.
+
+# ── Android SDK ──────────────────────────────────────────────────────────────
+# Windows default: C:\Users\<you>\AppData\Local\Android\Sdk
+sdk.dir=C\:\\Users\\YOUR_USERNAME\\AppData\\Local\\Android\\Sdk
+
+# ── ATAK CIV SDK (5.7.0) ─────────────────────────────────────────────────────
+sdk.path=C\:\\path\\to\\ATAK-CIV-5.7.0-SDK
+takdev.plugin=C\:\\path\\to\\ATAK-CIV-5.7.0-SDK\\atak-gradle-takdev.jar
+
+# ── Signing keys (takdev defaults; keystore auto-staged from the SDK) ─────────
+takDebugKeyAlias=wintec_mapping
+takDebugKeyFile=C\:\\path\\to\\ATAK-CIV-5.7.0-SDK\\android_keystore
+takDebugKeyFilePassword=tnttnt
+takDebugKeyPassword=tnttnt
+
+takReleaseKeyAlias=wintec_mapping
+takReleaseKeyFile=C\:\\path\\to\\ATAK-CIV-5.7.0-SDK\\android_keystore
+takReleaseKeyFilePassword=tnttnt
+takReleaseKeyPassword=tnttnt

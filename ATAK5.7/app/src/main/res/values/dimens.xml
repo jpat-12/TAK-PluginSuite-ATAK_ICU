@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Spacing scale -->
+    <dimen name="icu_space_xs">4dp</dimen>
+    <dimen name="icu_space_sm">8dp</dimen>
+    <dimen name="icu_space_md">12dp</dimen>
+    <dimen name="icu_space_lg">16dp</dimen>
+    <dimen name="icu_space_xl">24dp</dimen>
+
+    <!-- Radii -->
+    <dimen name="icu_radius_card">10dp</dimen>
+    <dimen name="icu_radius_input">8dp</dimen>
+    <dimen name="icu_radius_button">8dp</dimen>
+
+    <!-- Sizing -->
+    <dimen name="icu_input_height">44dp</dimen>
+    <dimen name="icu_button_height">44dp</dimen>
+    <dimen name="icu_header_height">52dp</dimen>
+    <dimen name="icu_border_width">1dp</dimen>
+</resources>
