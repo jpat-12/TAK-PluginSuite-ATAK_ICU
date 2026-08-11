@@ -2,7 +2,12 @@ package com.atakmap.android.icu.share;
 
 import com.atakmap.android.cot.CotMapComponent;
 import com.atakmap.android.icu.serve.MediaServerConfig;
-import com.atakmap.android.video.ConnectionEntry;
+// 5.7 dropped com.atakmap.android.video.ConnectionEntry; the gov.tak.api one is now
+// the only copy, and VideoXMLHandler.serialize(List<…>) takes it instead. Same 2-arg
+// (alias, url) constructor and setUID, so only the import differs — but this file
+// genuinely cannot be shared with ATAK5.6/, where serialize() accepts ONLY the
+// com.atakmap type and that class is final (so no common supertype to code against).
+import gov.tak.api.video.ConnectionEntry;
 import com.atakmap.android.video.manager.VideoXMLHandler;
 import com.atakmap.comms.TAKServer;
 import com.atakmap.comms.http.TakHttpClient;
