@@ -44,6 +44,31 @@ public class MediaServerConfig {
      */
     public String feedUuid = "";
 
+    // ── LAN multicast ────────────────────────────────────────────────────────────
+    // When destination is LAN, the phone can additionally blast the feed as MPEG-TS
+    // to a UDP multicast group so every peer on the segment receives it with no
+    // per-viewer connection (see MulticastTransport). The on-device RTSP server keeps
+    // running alongside it, so a peer can pull RTSP or subscribe to the group.
+
+    /** LAN: broadcast the feed to a UDP multicast group (in addition to on-device RTSP). */
+    public boolean multicastEnabled = true;
+    /** Multicast group address (administratively-scoped 239.x.x.x by default). */
+    public String  multicastGroup   = "239.255.0.1";
+    /** UDP port the MPEG-TS feed is sent to (5600 is the common tactical default). */
+    public int     multicastPort    = 5600;
+    /** IP TTL — 1 keeps the feed on the local segment; raise to cross routed hops. */
+    public int     multicastTtl     = 1;
+
+    /** True only when the destination is LAN and multicast broadcasting is enabled. */
+    public boolean multicastActive() {
+        return destination == Destination.LAN && multicastEnabled;
+    }
+
+    /** The URL peers open to receive the multicast feed, e.g. {@code udp://239.255.0.1:5600}. */
+    public String multicastUrl() {
+        return "udp://" + multicastGroup + ":" + multicastPort;
+    }
+
     /** The URL the phone publishes to, per selected protocol. */
     public String pushUrl() {
         switch (pushProtocol) {

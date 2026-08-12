@@ -258,6 +258,7 @@ and terminates TLS to make RTSPS real.
 | `serve/Transport` | interface | — | ✅ |
 | `serve/TransportManager` | fan-out (`CapturePipeline.Sink`) | — | ✅ |
 | `serve/OnDeviceRtspTransport` (wraps `RtspServer`) | on-device server | RTSP | ✅ Phase 2a — real, wired |
+| `serve/MulticastTransport` (+ `serve/TsMuxer`) | on-device UDP multicast | MPEG-TS over UDP (`udp://group:port`) | ✅ pure-Java MPEG-TS muxer, LAN group fan-out |
 | `serve/RtmpPushTransport` (+ `serve/rtmp/*`) | push → MediaMTX | RTSP+RTSPS+SRT+RTMP (via server) | ✅ Phase 2b — pure-Java RTMP publisher, **untested vs. live server** |
 | `serve/SrtTransport` | listener or push | SRT (encrypted) | ⬜ Phase 2c (needs native libsrt) |
 

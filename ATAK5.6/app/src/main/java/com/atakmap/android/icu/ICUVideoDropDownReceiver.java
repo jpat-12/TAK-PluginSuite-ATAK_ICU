@@ -31,6 +31,7 @@ import com.atakmap.android.icu.capture.CapturePipeline;
 import com.atakmap.android.icu.capture.EncoderConfig;
 import com.atakmap.android.icu.plugin.R;
 import com.atakmap.android.icu.serve.MediaServerConfig;
+import com.atakmap.android.icu.serve.MulticastTransport;
 import com.atakmap.android.icu.serve.OnDeviceRtspTransport;
 import com.atakmap.android.icu.serve.RtmpPushTransport;
 import com.atakmap.android.icu.serve.RtspPushTransport;
@@ -253,7 +254,9 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         // Verify before going live (shares camera + location to the network).
         String dest = serverConfig.pushEnabled()
                 ? (serverConfig.protocolName() + " → " + serverConfig.pushUrl())
-                : "Local network (LAN) — rtsp on this device";
+                : (serverConfig.multicastActive()
+                        ? "Local network (LAN) — multicast " + serverConfig.multicastUrl() + " + rtsp on this device"
+                        : "Local network (LAN) — rtsp on this device");
         confirm(ps(R.string.icu_confirm_start_title),
                 "Destination:\n" + dest, ps(R.string.icu_start), this::startBroadcast);
     }
@@ -289,6 +292,8 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             }
         } else {
             transports.register(new OnDeviceRtspTransport());       // LAN: peers pull from phone
+            if (serverConfig.multicastActive())                     // LAN: also blast to the group
+                transports.register(new MulticastTransport(serverConfig));
         }
         transports.setErrorListener((name, message) ->
                 ui.post(() -> Toast.makeText(pluginContext,
@@ -471,6 +476,10 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             // authenticates to the server and uses reliable RTSP-interleaved delivery.
             return new StreamEndpoint(serverConfig.protocolName(), serverConfig.feedViewUrl());
         }
+        // LAN with multicast on: advertise the group so peers receive it with no connection.
+        if (serverConfig.multicastActive()) {
+            return new StreamEndpoint("UDP", serverConfig.multicastUrl());
+        }
         return new StreamEndpoint("RTSP",
                 com.atakmap.android.icu.util.NetworkUtils.rtspUrl(
                         com.atakmap.android.icu.serve.RtspServer.PORT,
@@ -616,7 +625,8 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
     private void refreshDestBadge() {
         destBadge.setText(serverConfig.pushEnabled()
-                ? "SERVER → " + serverConfig.host : "LAN");
+                ? "SERVER → " + serverConfig.host
+                : (serverConfig.multicastActive() ? "LAN · MULTICAST" : "LAN"));
     }
 
     private void setStatus(String text) {
@@ -671,7 +681,31 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             final Button scanQrBtn = addSecondaryButton(ctx, broadcastCard, ps(R.string.icu_scan_qr));
             final EditText alias = addEdit(ctx, broadcastCard, ps(R.string.icu_alias),
                     serverConfig.alias, android.text.InputType.TYPE_CLASS_TEXT);
-            final Button destBtn = addPicker(ctx, broadcastCard, ps(R.string.icu_destination), destOpts[sel[0]]);
+            // Destination is a LAN ⇄ Server toggle (unchecked = LAN/multicast, checked =
+            // Media Server). A Switch reads better than a two-item picker and matches the
+            // "one side MediaMTX, the other multicast" mental model.
+            broadcastCard.addView(makeLabel(ctx, ps(R.string.icu_destination)));
+            final LinearLayout destRow = new LinearLayout(ctx);
+            destRow.setOrientation(LinearLayout.HORIZONTAL);
+            destRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            destRow.setBackground(pDrawable(R.drawable.bg_input));
+            int dPad = dp(ctx, 12);
+            destRow.setPadding(dPad, dp(ctx, 6), dPad, dp(ctx, 6));
+            destRow.setLayoutParams(new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            final TextView destMode = new TextView(ctx);
+            destMode.setText(destOpts[sel[0]]);
+            destMode.setTextColor(pColor(R.color.icu_text_primary));
+            destMode.setTextSize(14);
+            destMode.setLayoutParams(new LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            destRow.addView(destMode);
+            final android.widget.Switch destSwitch = new android.widget.Switch(ctx);
+            destSwitch.setChecked(sel[0] == 1);
+            destSwitch.setThumbTintList(
+                    android.content.res.ColorStateList.valueOf(pColor(R.color.icu_accent)));
+            destRow.addView(destSwitch);
+            broadcastCard.addView(destRow);
 
             final LinearLayout srv = new LinearLayout(ctx);
             srv.setOrientation(LinearLayout.VERTICAL);
@@ -707,6 +741,25 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
             broadcastCard.addView(srv);
             srv.setVisibility(sel[0] == 1 ? View.VISIBLE : View.GONE);
+
+            // Multicast group (visible only for the LAN side of the toggle). The on-device
+            // RTSP server keeps running regardless; multicast is an additional fan-out.
+            final LinearLayout mcast = new LinearLayout(ctx);
+            mcast.setOrientation(LinearLayout.VERTICAL);
+            final CharSequence[] mcOpts = { "Off", "On" };
+            final int[] mcSel = { serverConfig.multicastEnabled ? 1 : 0 };
+            final Button mcBtn = addPicker(ctx, mcast, "Multicast broadcast", mcOpts[mcSel[0]]);
+            mcBtn.setOnClickListener(x -> picker(ctx, "Multicast broadcast", mcOpts,
+                    i -> { mcSel[0] = i; mcBtn.setText(mcOpts[i]); }));
+            final EditText mcGroup = addEdit(ctx, mcast, "Multicast group",
+                    serverConfig.multicastGroup,
+                    android.text.InputType.TYPE_TEXT_VARIATION_URI | android.text.InputType.TYPE_CLASS_TEXT);
+            final EditText mcPort = addEdit(ctx, mcast, "Multicast port",
+                    Integer.toString(serverConfig.multicastPort), android.text.InputType.TYPE_CLASS_NUMBER);
+            final EditText mcTtl = addEdit(ctx, mcast, "Multicast TTL (1 = local segment)",
+                    Integer.toString(serverConfig.multicastTtl), android.text.InputType.TYPE_CLASS_NUMBER);
+            broadcastCard.addView(mcast);
+            mcast.setVisibility(sel[0] == 0 ? View.VISIBLE : View.GONE);
 
             // ── Card: Video ──────────────────────────────────────────────────────
             final LinearLayout videoCard = addCard(ctx, "VIDEO");
@@ -751,10 +804,12 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             final Button screenBtn = addPicker(ctx, dispCard, "Keep streaming when screen off",
                     screenOpts[screenSel[0]]);
 
-            destBtn.setOnClickListener(x -> picker(ctx, ps(R.string.icu_destination), destOpts, i -> {
-                sel[0] = i; destBtn.setText(destOpts[i]);
-                srv.setVisibility(i == 1 ? View.VISIBLE : View.GONE);
-            }));
+            destSwitch.setOnCheckedChangeListener((b, checked) -> {
+                sel[0] = checked ? 1 : 0;
+                destMode.setText(destOpts[sel[0]]);
+                srv.setVisibility(checked ? View.VISIBLE : View.GONE);
+                mcast.setVisibility(checked ? View.GONE : View.VISIBLE);
+            });
             protoBtn.setOnClickListener(x -> picker(ctx, ps(R.string.icu_protocol), protoOpts, i -> {
                 sel[4] = i; protoBtn.setText(protoOpts[i]);
                 port.setText(Integer.toString(MediaServerConfig.PushProtocol.values()[i].defaultPort));
@@ -779,7 +834,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     new QrScanDialog(ctx, config.rotationDegrees, text -> {
                         try {
                             StreamUrlParser.Parsed p = StreamUrlParser.parse(text);
-                            sel[0] = 1; destBtn.setText(destOpts[1]); srv.setVisibility(View.VISIBLE);
+                            destSwitch.setChecked(true);   // a scanned URL is always a Server push
                             sel[4] = p.protocol.ordinal(); protoBtn.setText(protoOpts[sel[4]]);
                             address.setText(p.host);
                             port.setText(Integer.toString(p.port));
@@ -816,6 +871,10 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 applyPastedAddress(serverConfig);
                 serverConfig.username = str(user, "");
                 serverConfig.password = str(pass, "");
+                serverConfig.multicastEnabled = mcSel[0] == 1;
+                serverConfig.multicastGroup = str(mcGroup, "239.255.0.1");
+                serverConfig.multicastPort = intOf(mcPort, 5600);
+                serverConfig.multicastTtl = Math.max(1, intOf(mcTtl, 1));
                 serverConfig.srtPassphrase = scannedPassphrase[0];
                 config.resolution = EncoderConfig.Resolution.values()[sel[1]];
                 config.fps = intOf(fpsOpts[sel[2]].toString(), 30);

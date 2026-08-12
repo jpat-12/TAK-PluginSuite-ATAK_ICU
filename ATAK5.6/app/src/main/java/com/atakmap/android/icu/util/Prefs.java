@@ -45,6 +45,10 @@ public final class Prefs {
         srv.username   = sp.getString("username", "");
         srv.password   = sp.getString("password", "");
         srv.serverPort = sp.getInt("server_port", 8554);
+        srv.multicastEnabled = sp.getBoolean("multicast_enabled", true);
+        srv.multicastGroup   = sp.getString("multicast_group", "239.255.0.1");
+        srv.multicastPort    = sp.getInt("multicast_port", 5600);
+        srv.multicastTtl     = sp.getInt("multicast_ttl", 1);
         srv.srtPassphrase = sp.getString("srt_passphrase", "");
         srv.feedUuid   = sp.getString("feed_uuid", "");
         try { srv.pushProtocol = MediaServerConfig.PushProtocol.valueOf(
@@ -78,6 +82,10 @@ public final class Prefs {
                 .putString("username", srv.username == null ? "" : srv.username)
                 .putString("password", srv.password == null ? "" : srv.password)
                 .putInt("server_port", srv.serverPort)
+                .putBoolean("multicast_enabled", srv.multicastEnabled)
+                .putString("multicast_group", nz(srv.multicastGroup, "239.255.0.1"))
+                .putInt("multicast_port", srv.multicastPort)
+                .putInt("multicast_ttl", srv.multicastTtl)
                 .putString("srt_passphrase", srv.srtPassphrase == null ? "" : srv.srtPassphrase)
                 .putString("feed_uuid", srv.feedUuid == null ? "" : srv.feedUuid)
                 .putString("push_protocol", srv.pushProtocol.name())

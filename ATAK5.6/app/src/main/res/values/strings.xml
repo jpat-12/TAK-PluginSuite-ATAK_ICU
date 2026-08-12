@@ -38,8 +38,8 @@
     <string name="icu_start">Start</string>
 
     <string-array name="icu_destinations">
-        <item>Local Area Network (this device)</item>
-        <item>Media Server, MediaMTX, TAK Restreamer</item>
+        <item>LAN — multicast + on-device RTSP</item>
+        <item>Media Server (MediaMTX / TAK Restreamer)</item>
     </string-array>
     <string-array name="icu_cameras">
         <item>Rear camera</item>

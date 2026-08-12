@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Streaming & encoding
+- **LAN multicast broadcast.** On the LAN destination the plugin now muxes the
+  H.264 feed into MPEG-TS and blasts it to a UDP multicast group (default
+  `udp://239.255.0.1:5600`), so every peer on the segment receives the same
+  stream with no per-viewer connection. PAT/PMT + SPS/PPS are re-sent before
+  every key frame so late joiners lock on within a GOP. The on-device RTSP
+  server keeps running alongside it (peers can pull RTSP or subscribe to the
+  group), and the multicast URL is what gets advertised on the self marker.
+- **Group, port, and TTL are configurable** in settings and persist across
+  restarts (TTL defaults to 1 = local segment).
+
+### UI
+- **Destination is now a persistent Switch** — LAN (multicast + on-device RTSP)
+  on one side, Media Server (MediaMTX) on the other — replacing the two-item
+  picker. The relevant fields (server credentials vs. multicast group) show for
+  the selected side, and both sides' settings persist.
+
 ## 2.2.8 — 2026-07-25
 
 This release consolidates the 1.4.x → 2.2.x line: the plugin gained full
