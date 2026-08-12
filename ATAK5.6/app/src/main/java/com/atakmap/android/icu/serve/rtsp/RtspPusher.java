@@ -51,6 +51,7 @@ public class RtspPusher {
     private byte[] sps, pps;
     private int rtpChannel = 0;          // interleaved RTP channel negotiated in SETUP
     private boolean sendErrLogged;       // throttle the "broken pipe" spam to one line
+    private volatile boolean broken;     // set once a send fails — the socket is dead (e.g. Wi-Fi→LTE)
     private volatile boolean streaming;  // true after RECORD; gates the drain loop
     private Thread drainThread;          // reads/discards the server's inbound RTCP + keepalives
 
@@ -216,13 +217,17 @@ public class RtspPusher {
             }
             sendRtp(nal, true, ts);
         } catch (IOException e) {
+            broken = true;   // socket is dead; RtspPushTransport will re-handshake
             if (!sendErrLogged) {
                 sendErrLogged = true;
-                Log.w(TAG, "sendNal failed (" + e.getMessage() + ") — server closed the RTP "
-                        + "connection after RECORD; stopping further log spam");
+                Log.w(TAG, "sendNal failed (" + e.getMessage() + ") — RTP connection dropped "
+                        + "(server close or network change); flagging for reconnect");
             }
         }
     }
+
+    /** True once a send has failed — the socket is dead and the stream is no longer flowing. */
+    public boolean isBroken() { return broken; }
 
     private void sendRtp(byte[] nal, boolean marker, long ts) throws IOException {
         if (nal.length <= 1400) {
@@ -263,6 +268,7 @@ public class RtspPusher {
             writeInterleaved(audioRtpChannel,
                     buildRtp(payload, 0, payload.length, true, ts, PT_AUDIO, audioSeq++, audioSsrc));
         } catch (IOException e) {
+            broken = true;
             if (!sendErrLogged) {
                 sendErrLogged = true;
                 Log.w(TAG, "sendAudio failed (" + e.getMessage() + ")");

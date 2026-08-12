@@ -166,6 +166,10 @@ public class CapturePipeline {
     public byte[] getSps() { return sps; }
     public byte[] getPps() { return pps; }
 
+    /** Force a key frame at the next opportunity — used to speed viewer recovery after a
+     *  transport reconnect so they don't wait a full GOP for the next SPS/PPS + IDR. */
+    public void requestKeyFrame() { if (running) encoder.requestSyncFrame(); }
+
     public CameraSource getCamera() { return camera; }
 
     /**

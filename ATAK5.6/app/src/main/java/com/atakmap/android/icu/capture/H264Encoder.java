@@ -142,7 +142,8 @@ public class H264Encoder {
         }, periodMs, periodMs);
     }
 
-    private void requestSyncFrame() {
+    /** Ask the encoder to emit a key frame (with fresh SPS/PPS) at the next opportunity. */
+    public void requestSyncFrame() {
         MediaCodec c = codec;
         if (c == null || !running) return;
         try {

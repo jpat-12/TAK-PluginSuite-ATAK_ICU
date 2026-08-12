@@ -41,6 +41,21 @@ public interface Transport {
 
     void stop();
 
+    /**
+     * Re-establish delivery after a network change (e.g. Wi-Fi → LTE handoff) without
+     * tearing down the camera/encoder. Push transports tear down the dead socket and
+     * re-handshake on the now-current default network (new sockets bind to it
+     * automatically); on-device servers rebind their egress. A no-op by default.
+     *
+     * <p>While a reconnect is in flight {@link #reconnecting()} returns true so the UI can
+     * show "Reconnecting…" instead of a false "LIVE" or a terminal failure. Only a reconnect
+     * that exhausts its retries sets a terminal {@link #failureReason()}.</p>
+     */
+    default void reconnect() {}
+
+    /** True while a {@link #reconnect()} is in progress (drives the "Reconnecting…" status). */
+    default boolean reconnecting() { return false; }
+
     /** URL(s) viewers can use for this transport. May be empty until started. */
     List<StreamEndpoint> endpoints();
 

@@ -41,6 +41,7 @@ import com.atakmap.android.icu.serve.TransportManager;
 import com.atakmap.android.icu.share.SelfMarkerFov;
 import com.atakmap.android.icu.ui.StreamStatusWidget;
 import com.atakmap.android.icu.ui.qr.QrScanDialog;
+import com.atakmap.android.icu.util.NetworkMonitor;
 import com.atakmap.android.icu.util.Prefs;
 import com.atakmap.android.icu.util.StreamUrlParser;
 import com.atakmap.android.maps.MapView;
@@ -84,6 +85,11 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     // CotMapComponent.addAdditionalDetail — the FOV rides on the skittle's own CoT
     // (ATAK renders it), no separate marker. See SelfMarkerFov.
     private final SelfMarkerFov sensor = new SelfMarkerFov();
+
+    // Detects Wi-Fi↔LTE (default-network) handoffs while streaming so transports can
+    // re-establish on the new network instead of dying silently. Active only while live.
+    private NetworkMonitor netMonitor;
+    private long lastReconnectMs;   // debounce for reconnect triggers
 
     // Registers the stream as a feed on the TAK Server's Video Feed Manager (server DB
     // via /Marti/vcm) when pushing to a server. See VideoConnectionPublisher.
@@ -329,6 +335,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                         videoPublisher.publish(serverConfig, serverConfig.feedUuid);
                     }
                     statusWidget.setStreaming(true);
+                    startNetworkMonitor();   // survive Wi-Fi↔LTE handoffs while live
                     updateLiveStatus(0);
                 });
             }
@@ -336,6 +343,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 Log.w(TAG, "capture error: " + message);
                 ui.post(() -> {
                     sensor.stop();
+                    stopNetworkMonitor();
                     if (transports != null) transports.stopAll();
                     releaseWakeLock();
                     statusWidget.setStreaming(false);
@@ -351,6 +359,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
     private void stopBroadcast() {
         sensor.stop();                       // revert self marker to the user's prefs
+        stopNetworkMonitor();
         // Flip the server feed inactive (can't DELETE it with an EUD cert).
         if (serverConfig.pushEnabled()
                 && serverConfig.feedUuid != null && !serverConfig.feedUuid.isEmpty()) {
@@ -577,9 +586,18 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     private void updateLiveStatus(int frames) {
         if (authFailureHandled) return;   // already auto-stopped; keep the error on screen
 
-        // A server push that failed (e.g. bad credentials) isn't reaching anyone, even
-        // though the encoder keeps producing frames — so stop the broadcast outright
-        // instead of showing a false "LIVE".
+        // Mid-reconnect after a network change: hold the "Reconnecting…" status rather
+        // than showing a false "LIVE" or tearing the broadcast down — the transports are
+        // re-handshaking on the new network (see onNetworkChanged / Transport.reconnect).
+        if (transports != null && transports.anyReconnecting()) {
+            setStatus("Reconnecting…");
+            liveDot.setVisibility(View.GONE);
+            return;
+        }
+
+        // A server push that failed terminally (e.g. bad credentials, or a reconnect that
+        // exhausted its retries) isn't reaching anyone even though the encoder keeps
+        // producing frames — so stop the broadcast outright instead of a false "LIVE".
         String failure = (transports != null) ? transports.failureReason() : null;
         if (failure != null) { handlePushFailure(failure); return; }
 
@@ -621,6 +639,43 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         previewHint.setVisibility(View.VISIBLE);
         if (authBadge != null) authBadge.setVisibility(View.GONE);
         setStatus(pluginContext.getString(R.string.icu_status_idle));
+    }
+
+    // ── Network-change reconnect ─────────────────────────────────────────────────
+
+    private void startNetworkMonitor() {
+        stopNetworkMonitor();
+        netMonitor = new NetworkMonitor(atakContext(), this::onNetworkChanged);
+        netMonitor.start();
+    }
+
+    private void stopNetworkMonitor() {
+        if (netMonitor != null) { netMonitor.stop(); netMonitor = null; }
+    }
+
+    /**
+     * The default network changed (e.g. Wi-Fi → LTE). Re-establish the transports on the
+     * new network without dropping the camera/encoder, refresh the advertised URL and the
+     * TAK Server feed registration, and force a key frame so viewers recover quickly. Runs
+     * on the main thread; debounced so a burst of callbacks triggers one reconnect.
+     */
+    private void onNetworkChanged() {
+        if (transports == null || !pipeline.isRunning()) return;
+        long now = System.currentTimeMillis();
+        if (now - lastReconnectMs < 3000) return;   // debounce callback bursts
+        lastReconnectMs = now;
+
+        Log.d(TAG, "network changed — reconnecting transports");
+        setStatus("Network changed — reconnecting…");
+        liveDot.setVisibility(View.GONE);
+        transports.reconnectAll();
+        pipeline.requestKeyFrame();                       // speed viewer recovery
+        sensor.updateUrl(advertisedEndpoint().url);       // LAN address may have shifted
+        if (serverConfig.pushEnabled()) {                 // re-assert the server feed row
+            ensureFeedUuid();
+            videoPublisher.publish(serverConfig, serverConfig.feedUuid);
+        }
+        ui.postDelayed(() -> { if (pipeline.isRunning()) updateLiveStatus(0); }, 2000);
     }
 
     private void refreshDestBadge() {

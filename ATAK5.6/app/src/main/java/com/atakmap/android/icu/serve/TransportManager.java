@@ -49,6 +49,20 @@ public class TransportManager implements CapturePipeline.Sink {
         }
     }
 
+    /** Ask every transport to re-establish delivery after a network change. */
+    public void reconnectAll() {
+        for (Transport t : transports) {
+            try { t.reconnect(); }
+            catch (Exception e) { Log.w(TAG, "reconnect " + t.name() + ": " + e.getMessage()); }
+        }
+    }
+
+    /** True while any transport is mid-reconnect (drives the pane's "Reconnecting…" status). */
+    public boolean anyReconnecting() {
+        for (Transport t : transports) if (t.reconnecting()) return true;
+        return false;
+    }
+
     // ── CapturePipeline.Sink ────────────────────────────────────────────────────
 
     @Override

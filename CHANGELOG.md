@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Reliability
+- **Survive network handoffs (Wi-Fi ↔ LTE).** The plugin now watches the default
+  network while streaming (`NetworkMonitor`) and, on a change, re-establishes the
+  transports on the new network instead of streaming into a dead socket: server
+  push (RTSP/RTMP) tears down and re-handshakes with bounded backoff, multicast
+  rebinds its socket to the new interface, and the on-device RTSP URL advertised
+  on the self marker is refreshed. A key frame is forced so viewers recover within
+  a GOP. The pane shows **"Reconnecting…"** during the handoff.
+- **No more silent death.** Previously a dropped push socket was swallowed on the
+  send path while the UI kept showing "LIVE". The dead socket is now detected and
+  drives an automatic reconnect; only an exhausted reconnect surfaces a terminal
+  failure. A multicast send error no longer tears down the whole LAN broadcast
+  (the on-device RTSP server keeps serving).
+
 ### Streaming & encoding
 - **LAN multicast broadcast.** On the LAN destination the plugin now muxes the
   H.264 feed into MPEG-TS and blasts it to a UDP multicast group (default

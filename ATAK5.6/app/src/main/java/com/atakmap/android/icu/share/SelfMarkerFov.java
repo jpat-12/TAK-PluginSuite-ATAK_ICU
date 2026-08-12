@@ -85,6 +85,18 @@ public final class SelfMarkerFov {
         Log.d(TAG, "self CoT FOV+video on: " + videoUrl);
     }
 
+    /**
+     * Swap the advertised video URL in place (no timer changes) — used after a network
+     * change when the on-device LAN address shifts, so the next outbound self-CoT carries
+     * the reachable URL. No-op if not currently broadcasting.
+     */
+    public void updateUrl(String videoUrl) {
+        if (!active || videoUrl == null || videoUrl.isEmpty()) return;
+        if (videoUrl.equals(this.url)) return;
+        this.url = videoUrl;
+        Log.d(TAG, "self CoT video URL updated: " + videoUrl);
+    }
+
     public void stop() {
         if (!active) return;
         active = false;

@@ -33,10 +33,12 @@ public class MulticastTransport implements Transport {
     private volatile boolean started;
     private volatile String failure;
 
-    private MulticastSocket socket;
+    // socket is swapped by reconnect() (callback thread) and read by the muxer's send
+    // callback (encoder thread), so it must be volatile for visibility.
+    private volatile MulticastSocket socket;
     private InetAddress group;
     private int port;
-    private TsMuxer muxer;
+    private volatile TsMuxer muxer;
 
     public MulticastTransport(MediaServerConfig cfg) { this.cfg = cfg; }
 
@@ -90,6 +92,37 @@ public class MulticastTransport implements Transport {
         muxer = null;
     }
 
+    /**
+     * Rebind the sending socket to the now-current LAN interface after a network change.
+     * The MPEG-TS muxer is left untouched (it keeps running on the encoder thread and still
+     * holds SPS/PPS); PAT/PMT + SPS/PPS are already re-sent on every key frame, so receivers
+     * on the new segment resync within a GOP. Group/port are unchanged, so the advertised
+     * URL stays valid. Swapping only the {@code socket} field (read by the muxer's send
+     * callback) avoids mutating the muxer from this callback thread.
+     */
+    @Override
+    public void reconnect() {
+        if (!started) return;
+        MulticastSocket old = socket;
+        try {
+            MulticastSocket ns = new MulticastSocket();
+            ns.setTimeToLive(Math.max(1, cfg.multicastTtl));
+            NetworkInterface nif = egressInterface();
+            if (nif != null) {
+                try { ns.setNetworkInterface(nif); }
+                catch (Exception e) { Log.w(TAG, "setNetworkInterface: " + e.getMessage()); }
+            }
+            socket = ns;
+            failure = null;
+            Log.d(TAG, "multicast rebound to current interface after network change");
+        } catch (Exception e) {
+            failure = "multicast rebind failed: " + e.getMessage();
+            Log.w(TAG, failure);
+        } finally {
+            if (old != null) { try { old.close(); } catch (Exception ignored) {} }
+        }
+    }
+
     @Override
     public List<StreamEndpoint> endpoints() {
         if (!started) return Collections.emptyList();
@@ -105,7 +138,11 @@ public class MulticastTransport implements Transport {
         return "Multicast: " + cfg.multicastGroup + ":" + port;
     }
 
-    @Override public String failureReason() { return failure; }
+    // Multicast is a best-effort, additive LAN fan-out running alongside the on-device RTSP
+    // server — a send error (e.g. the interface dropped on a handoff) must NOT tear the whole
+    // broadcast down. It's rebound by reconnect() on the next network-change callback; here we
+    // only surface it in the status line, never as a terminal failure.
+    @Override public String failureReason() { return null; }
 
     /** The up, non-loopback interface owning our reachable IPv4, or null to let the OS pick. */
     private static NetworkInterface egressInterface() {
