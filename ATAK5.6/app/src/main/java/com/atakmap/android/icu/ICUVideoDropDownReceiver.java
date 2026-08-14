@@ -31,6 +31,7 @@ import com.atakmap.android.icu.capture.CapturePipeline;
 import com.atakmap.android.icu.capture.EncoderConfig;
 import com.atakmap.android.icu.plugin.R;
 import com.atakmap.android.icu.serve.MediaServerConfig;
+import com.atakmap.android.icu.serve.MulticastTsTransport;
 import com.atakmap.android.icu.serve.OnDeviceRtspTransport;
 import com.atakmap.android.icu.serve.RtmpPushTransport;
 import com.atakmap.android.icu.serve.RtspPushTransport;
@@ -40,6 +41,8 @@ import com.atakmap.android.icu.serve.TransportManager;
 import com.atakmap.android.icu.share.SelfMarkerFov;
 import com.atakmap.android.icu.ui.StreamStatusWidget;
 import com.atakmap.android.icu.ui.qr.QrScanDialog;
+import com.atakmap.android.icu.util.NetworkMonitor;
+import com.atakmap.android.icu.util.OrientationController;
 import com.atakmap.android.icu.util.Prefs;
 import com.atakmap.android.icu.util.StreamUrlParser;
 import com.atakmap.android.maps.MapView;
@@ -91,6 +94,13 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     private final StreamStatusWidget statusWidget;
 
     private TransportManager transports;
+
+    // Reconnects the transports when the phone hands off between networks (Wi-Fi ↔ LTE) so
+    // the feed survives a network change instead of silently stalling. Active only while live.
+    private NetworkMonitor networkMonitor;
+    // Drives the camera rotation from the physical device orientation when rotation is set to
+    // Auto. Active only while broadcasting in Auto mode.
+    private OrientationController orientation;
 
     private TextView    statusText;
     private int         defaultStatusColor;    // status text's normal colour (for reset after errors)
@@ -210,7 +220,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             return;
         }
 
-        int deg = ((config.rotationDegrees % 360) + 360) % 360;
+        int deg = config.captureRotation();
         // Match the encoder/stream: the camera's SurfaceTexture bakes in the 90° sensor
         // orientation, so the upright frame is PORTRAIT for 0°/180° and LANDSCAPE for
         // 90°/270°. Use the same swap the encoder uses so the preview aspect matches the
@@ -253,7 +263,9 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         // Verify before going live (shares camera + location to the network).
         String dest = serverConfig.pushEnabled()
                 ? (serverConfig.protocolName() + " → " + serverConfig.pushUrl())
-                : "Local network (LAN) — rtsp on this device";
+                : (serverConfig.multicastActive()
+                        ? "Local network (LAN) — on-device RTSP + multicast " + serverConfig.multicastUrl()
+                        : "Local network (LAN) — rtsp on this device");
         confirm(ps(R.string.icu_confirm_start_title),
                 "Destination:\n" + dest, ps(R.string.icu_start), this::startBroadcast);
     }
@@ -279,20 +291,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         broadcastButton.setEnabled(false);
 
         // Serve layer first, so transports are ready before frames flow.
-        // Exclusive by destination: SERVER pushes only; LAN serves on-device only.
-        transports = new TransportManager();
-        if (serverConfig.pushEnabled()) {
-            switch (serverConfig.pushProtocol) {                    // user-selected push protocol
-                case RTSP: transports.register(new RtspPushTransport(serverConfig)); break;
-                case SRT:  transports.register(new SrtTransport(serverConfig, serverConfig.serverPort)); break;
-                default:   transports.register(new RtmpPushTransport(serverConfig)); break;
-            }
-        } else {
-            transports.register(new OnDeviceRtspTransport());       // LAN: peers pull from phone
-        }
-        transports.setErrorListener((name, message) ->
-                ui.post(() -> Toast.makeText(pluginContext,
-                        name + " unavailable: " + message, Toast.LENGTH_LONG).show()));
+        transports = buildTransports();
         transports.startAll(config);
 
         pipeline.setSink(transports);
@@ -325,6 +324,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     }
                     statusWidget.setStreaming(true);
                     updateLiveStatus(0);
+                    startLiveMonitors();
                 });
             }
             @Override public void onError(String message) {
@@ -345,6 +345,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     }
 
     private void stopBroadcast() {
+        stopLiveMonitors();                  // network-change + orientation watchers
         sensor.stop();                       // revert self marker to the user's prefs
         // Flip the server feed inactive (can't DELETE it with an EUD cert).
         if (serverConfig.pushEnabled()
@@ -356,6 +357,113 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         releaseWakeLock();
         statusWidget.setStreaming(false);
         resetIdleUi();
+    }
+
+    /**
+     * Build the transport set for the current destination.
+     * <ul>
+     *   <li><b>SERVER</b> — a single push transport for the selected protocol.</li>
+     *   <li><b>LAN</b> — the on-device RTSP server (peers pull) and, when enabled, a UDP
+     *       multicast MPEG-TS sender (one-to-many, carries audio) running alongside it.</li>
+     * </ul>
+     */
+    private TransportManager buildTransports() {
+        TransportManager tm = new TransportManager();
+        if (serverConfig.pushEnabled()) {
+            switch (serverConfig.pushProtocol) {                    // user-selected push protocol
+                case RTSP: tm.register(new RtspPushTransport(serverConfig)); break;
+                case SRT:  tm.register(new SrtTransport(serverConfig, serverConfig.serverPort)); break;
+                default:   tm.register(new RtmpPushTransport(serverConfig)); break;
+            }
+        } else {
+            tm.register(new OnDeviceRtspTransport());               // LAN: peers pull from phone
+            if (serverConfig.multicastActive())                    // LAN: one-to-many multicast feed
+                tm.register(new MulticastTsTransport(serverConfig, atakContext()));
+        }
+        tm.setErrorListener((name, message) ->
+                ui.post(() -> Toast.makeText(pluginContext,
+                        name + " unavailable: " + message, Toast.LENGTH_LONG).show()));
+        return tm;
+    }
+
+    // ── Live monitors: network-change reconnect + auto-orientation ────────────────
+
+    /** Start the watchers that keep a live broadcast healthy: reconnect on a network handoff,
+     *  and (in Auto rotation) track the device orientation. Called once capture is up. */
+    private void startLiveMonitors() {
+        if (networkMonitor == null) {
+            networkMonitor = new NetworkMonitor(atakContext(), this::onNetworkChanged);
+            networkMonitor.start();
+        }
+        if (config.isAutoRotate() && orientation == null) {
+            orientation = new OrientationController(atakContext(), this::onAutoRotationChanged);
+            orientation.enable();
+        }
+    }
+
+    private void stopLiveMonitors() {
+        if (networkMonitor != null) { networkMonitor.stop(); networkMonitor = null; }
+        if (orientation != null) { orientation.disable(); orientation = null; }
+    }
+
+    /**
+     * The default network changed (e.g. Wi-Fi → LTE). A push socket bound to the old network
+     * is dead and the LAN address has moved, so rebuild the transports on the new network
+     * without disturbing the running camera/encoder, then re-advertise the feed. No-op if the
+     * broadcast was torn down in the meantime.
+     */
+    private void onNetworkChanged() {
+        if (!pipeline.isRunning() || transports == null) return;
+        setStatus("Network changed — reconnecting…");
+        try {
+            TransportManager old = transports;
+            old.stopAll();
+
+            TransportManager fresh = buildTransports();
+            fresh.startAll(config);
+            // Re-seed the codec config so the new transports have SPS/PPS (and the on-device
+            // RTSP SDP) immediately, without waiting for the next keyframe. Audio config is
+            // emitted once at start, so re-seed it too — otherwise a push transport that waits
+            // for the AAC track before its handshake would hang after the reconnect.
+            byte[] sps = pipeline.getSps(), pps = pipeline.getPps();
+            if (sps != null && pps != null) fresh.onFormat(sps, pps);
+            byte[] asc = pipeline.getAudioAsc();
+            if (asc != null) fresh.onAudioFormat(asc, pipeline.getAudioRate(), pipeline.getAudioChannels());
+            pipeline.setSink(fresh);
+            transports = fresh;
+
+            // Re-advertise: the LAN URL (and any pushed server feed) may have a new address.
+            sensor.start(advertisedEndpoint().url, serverConfig.alias,
+                    config.fovRefreshSec, config.fovRangeM);
+            if (serverConfig.pushEnabled()) {
+                ensureFeedUuid();
+                videoPublisher.publish(serverConfig, serverConfig.feedUuid);
+            }
+            updateLiveStatus(0);
+        } catch (Throwable t) {
+            Log.w(TAG, "reconnect after network change failed: " + t.getMessage());
+            setStatus("Reconnect failed — check network");
+        }
+    }
+
+    /**
+     * Auto-rotation: the device orientation settled on a new angle. A same-aspect flip (e.g.
+     * landscape↔reverse-landscape) is applied live in the GL stage; a portrait↔landscape swap
+     * changes the encoder output size, so it goes through a quick capture restart.
+     */
+    private void onAutoRotationChanged(int degrees) {
+        if (!pipeline.isRunning() || !config.isAutoRotate()) return;
+        boolean aspectChanged =
+                EncoderConfig.isLandscapeRotation(degrees) != EncoderConfig.isLandscapeRotation(config.captureRotation());
+        config.setResolvedRotation(degrees);
+        if (aspectChanged) {
+            Toast.makeText(atakContext(), "Rotating…", Toast.LENGTH_SHORT).show();
+            stopBroadcast();
+            startBroadcast();
+        } else {
+            pipeline.setRotation(degrees);   // live GL update, no restart
+            applyPreviewRotation();
+        }
     }
 
     /** Default broadcast alias — the operator callsign, else VIDEO_1. */
@@ -487,7 +595,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             Toast.makeText(atakContext(), "Start broadcasting first.", Toast.LENGTH_SHORT).show();
             return;
         }
-        pipeline.captureStill(config.rotationDegrees, new CameraSource.StillCallback() {
+        pipeline.captureStill(config.captureRotation(), new CameraSource.StillCallback() {
             @Override public void onStill(byte[] jpeg) {
                 ui.post(() -> saveSnapshotJpeg(jpeg));
             }
@@ -708,6 +816,23 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             broadcastCard.addView(srv);
             srv.setVisibility(sel[0] == 1 ? View.VISIBLE : View.GONE);
 
+            // LAN multicast settings — shown for the LAN destination. The multicast MPEG-TS
+            // feed runs alongside the on-device RTSP server so a receiver can play it with a
+            // single udp://@group:port URL (and it carries audio).
+            final LinearLayout lan = new LinearLayout(ctx);
+            lan.setOrientation(LinearLayout.VERTICAL);
+            final CharSequence[] mcOpts = { "Off", "On" };
+            final int[] mcSel = { serverConfig.multicastEnabled ? 1 : 0 };
+            final Button mcBtn = addPicker(ctx, lan, "LAN multicast (MPEG-TS)", mcOpts[mcSel[0]]);
+            mcBtn.setOnClickListener(x -> picker(ctx, "LAN multicast (MPEG-TS)", mcOpts,
+                    i -> { mcSel[0] = i; mcBtn.setText(mcOpts[i]); }));
+            final EditText mcGroup = addEdit(ctx, lan, "Multicast group (224–239.x.x.x)",
+                    serverConfig.multicastGroup, android.text.InputType.TYPE_CLASS_TEXT);
+            final EditText mcPort = addEdit(ctx, lan, "Multicast port",
+                    Integer.toString(serverConfig.multicastPort), android.text.InputType.TYPE_CLASS_NUMBER);
+            broadcastCard.addView(lan);
+            lan.setVisibility(sel[0] == 0 ? View.VISIBLE : View.GONE);
+
             // ── Card: Video ──────────────────────────────────────────────────────
             final LinearLayout videoCard = addCard(ctx, "VIDEO");
             final Button resBtn = addPicker(ctx, videoCard, ps(R.string.icu_resolution), resOpts[sel[1]]);
@@ -754,6 +879,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             destBtn.setOnClickListener(x -> picker(ctx, ps(R.string.icu_destination), destOpts, i -> {
                 sel[0] = i; destBtn.setText(destOpts[i]);
                 srv.setVisibility(i == 1 ? View.VISIBLE : View.GONE);
+                lan.setVisibility(i == 0 ? View.VISIBLE : View.GONE);
             }));
             protoBtn.setOnClickListener(x -> picker(ctx, ps(R.string.icu_protocol), protoOpts, i -> {
                 sel[4] = i; protoBtn.setText(protoOpts[i]);
@@ -776,10 +902,11 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     return;
                 }
                 try {
-                    new QrScanDialog(ctx, config.rotationDegrees, text -> {
+                    new QrScanDialog(ctx, config.captureRotation(), text -> {
                         try {
                             StreamUrlParser.Parsed p = StreamUrlParser.parse(text);
-                            sel[0] = 1; destBtn.setText(destOpts[1]); srv.setVisibility(View.VISIBLE);
+                            sel[0] = 1; destBtn.setText(destOpts[1]);
+                            srv.setVisibility(View.VISIBLE); lan.setVisibility(View.GONE);
                             sel[4] = p.protocol.ordinal(); protoBtn.setText(protoOpts[sel[4]]);
                             address.setText(p.host);
                             port.setText(Integer.toString(p.port));
@@ -817,6 +944,9 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 serverConfig.username = str(user, "");
                 serverConfig.password = str(pass, "");
                 serverConfig.srtPassphrase = scannedPassphrase[0];
+                serverConfig.multicastEnabled = mcSel[0] == 1;
+                serverConfig.multicastGroup = str(mcGroup, "239.1.1.1");
+                serverConfig.multicastPort = intOf(mcPort, 5600);
                 config.resolution = EncoderConfig.Resolution.values()[sel[1]];
                 config.fps = intOf(fpsOpts[sel[2]].toString(), 30);
                 config.bitrateKbps = intOf(bitrate, 2500);
@@ -1046,15 +1176,17 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         if (fps <= 24) return 1;
         return 2;
     }
-    // Orientation setting order (see icu_rotations in strings.xml): Portrait=0°,
-    // Landscape=270°, Reverse Portrait=180°, Reverse Landscape=90° — anchored on the
-    // device-tested value that Landscape needs a 270° correction, with the other three
-    // derived from the fixed 90°-apart / 180°-reverse relationship between them.
+    // Orientation setting order (see icu_rotations in strings.xml): Auto(-1)=match device,
+    // Portrait=0°, Landscape=270°, Reverse Portrait=180°, Reverse Landscape=90° — the manual
+    // values are anchored on the device-tested fact that Landscape needs a 270° correction,
+    // with the other three derived from the fixed 90°-apart / 180°-reverse relationship.
+    // Auto drives these same angles live from the orientation sensor (OrientationController).
     private static int rotationIndex(int deg) {
-        switch (deg) { case 270: return 1; case 180: return 2; case 90: return 3; default: return 0; }
+        if (deg < 0) return 0;   // Auto
+        switch (deg) { case 0: return 1; case 270: return 2; case 180: return 3; case 90: return 4; default: return 1; }
     }
     private static int rotationValue(int index) {
-        switch (index) { case 1: return 270; case 2: return 180; case 3: return 90; default: return 0; }
+        switch (index) { case 0: return -1; case 2: return 270; case 3: return 180; case 4: return 90; default: return 0; }
     }
     private static String str(EditText e, String def) {
         String s = e.getText().toString().trim();

@@ -39,6 +39,16 @@ public class OnDeviceRtspTransport implements Transport {
     }
 
     @Override
+    public void onAudioFormat(byte[] asc, int sampleRate, int channels) {
+        server.setAudioConfig(asc, sampleRate, channels);
+    }
+
+    @Override
+    public void onAudioSample(byte[] aac, long ptsUs) {
+        server.sendAudioSample(aac, ptsUs);
+    }
+
+    @Override
     public void stop() {
         started = false;
         server.stop();

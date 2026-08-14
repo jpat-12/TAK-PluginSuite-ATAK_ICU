@@ -63,6 +63,7 @@
     <!-- Order matches rotationIndex()/rotationValue() in ICUVideoDropDownReceiver:
          Portrait=0°, Landscape=270°, Reverse Portrait=180°, Reverse Landscape=90°. -->
     <string-array name="icu_rotations">
+        <item>Auto (match device)</item>
         <item>Portrait</item>
         <item>Landscape</item>
         <item>Reverse Portrait</item>

@@ -48,6 +48,10 @@ public class CapturePipeline {
     private volatile boolean running;
     private volatile byte[] sps;
     private volatile byte[] pps;
+    // Cached AAC config (emitted once by the encoder at start). Kept so a transport rebuilt
+    // mid-broadcast — e.g. after a network handoff — can be re-seeded without a restart.
+    private volatile byte[] audioAsc;
+    private volatile int    audioRate, audioChannels;
     private volatile Sink sink;
 
     public boolean isRunning() { return running; }
@@ -101,7 +105,7 @@ public class CapturePipeline {
         // surface. On any GL failure, fall back to feeding the encoder directly (no rotation).
         Surface cameraTarget = encoderSurface;
         glPipe = new GlRotationPipe(encoderSurface, config.captureW, config.captureH,
-                config.rotationDegrees, config.useFrontCamera);
+                config.captureRotation(), config.useFrontCamera);
         Surface glInput = glPipe.start();
         if (glInput != null) {
             cameraTarget = glInput;
@@ -122,6 +126,7 @@ public class CapturePipeline {
         if (config.streamAudio) {
             boolean ok = audio.start(new AacEncoder.Callback() {
                 @Override public void onAudioFormat(byte[] asc, int sampleRate, int channels) {
+                    audioAsc = asc; audioRate = sampleRate; audioChannels = channels;
                     Sink s = sink;
                     if (s != null) s.onAudioFormat(asc, sampleRate, channels);
                 }
@@ -157,6 +162,16 @@ public class CapturePipeline {
         if (running) camera.setPreviewSurface(preview);
     }
 
+    /**
+     * Live-update the encoded stream's rotation without restarting capture. Valid only for a
+     * same-aspect (180°) change — a portrait↔landscape swap changes the encoder output size
+     * and must go through a full stop/start. The receiver's Auto-orientation logic decides.
+     */
+    public void setRotation(int degrees) {
+        GlRotationPipe p = glPipe;
+        if (running && p != null) p.setRotation(degrees);
+    }
+
     /** Forward codec config to the sink once both SPS and PPS are known. */
     private void pushFormat() {
         Sink s = sink;
@@ -165,6 +180,9 @@ public class CapturePipeline {
 
     public byte[] getSps() { return sps; }
     public byte[] getPps() { return pps; }
+    public byte[] getAudioAsc() { return audioAsc; }
+    public int getAudioRate() { return audioRate; }
+    public int getAudioChannels() { return audioChannels; }
 
     public CameraSource getCamera() { return camera; }
 

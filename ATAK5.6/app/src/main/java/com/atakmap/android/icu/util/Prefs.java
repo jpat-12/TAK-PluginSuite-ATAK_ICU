@@ -47,6 +47,9 @@ public final class Prefs {
         srv.serverPort = sp.getInt("server_port", 8554);
         srv.srtPassphrase = sp.getString("srt_passphrase", "");
         srv.feedUuid   = sp.getString("feed_uuid", "");
+        srv.multicastEnabled = sp.getBoolean("multicast_enabled", true);
+        srv.multicastGroup   = sp.getString("multicast_group", "239.1.1.1");
+        srv.multicastPort    = sp.getInt("multicast_port", 5600);
         try { srv.pushProtocol = MediaServerConfig.PushProtocol.valueOf(
                 sp.getString("push_protocol", "RTSP")); }
         catch (Exception ignored) { srv.pushProtocol = MediaServerConfig.PushProtocol.RTSP; }
@@ -80,6 +83,9 @@ public final class Prefs {
                 .putInt("server_port", srv.serverPort)
                 .putString("srt_passphrase", srv.srtPassphrase == null ? "" : srv.srtPassphrase)
                 .putString("feed_uuid", srv.feedUuid == null ? "" : srv.feedUuid)
+                .putBoolean("multicast_enabled", srv.multicastEnabled)
+                .putString("multicast_group", nz(srv.multicastGroup, "239.1.1.1"))
+                .putInt("multicast_port", srv.multicastPort)
                 .putString("push_protocol", srv.pushProtocol.name())
                 .putString("resolution", enc.resolution.name())
                 .putInt("fps", enc.fps)

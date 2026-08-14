@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.3.0 — 2026-08-14
+
+Adds the four field-requested broadcast capabilities: audio on the LAN path, a
+persistent LAN multicast feed, reconnection across a network handoff, and
+automatic portrait/landscape orientation. All on the ATAK plugin.
+
+### LAN multicast (MPEG-TS)
+- **New `udp://@group:port` multicast feed** for the LAN destination. An MPEG-TS
+  muxer (`serve/ts/MpegTsMuxer`) packetizes H.264 **and AAC** into a transport
+  stream sent to a multicast group (default `239.1.1.1:5600`), so any number of
+  receivers on the LAN/mesh can play one URL — ATAK's own video player, VLC, and
+  ffmpeg all read it. Runs **alongside** the existing on-device RTSP server, so
+  RTSP-pull viewers keep working; nothing about the old LAN behavior changes.
+- **Settings:** the persistent Destination toggle (LAN ↔ Server) now exposes a
+  *LAN multicast* on/off plus the group + port, saved to prefs.
+
+### Audio
+- **Audio on the LAN path.** The multicast feed carries the mic (AAC) track, and
+  the **on-device RTSP server** now advertises and serves a second AAC (RFC 3640)
+  track too — so LAN viewers get audio, not just server-push viewers.
+
+### Reconnect on network change
+- **Wi-Fi ↔ LTE handoff no longer kills the stream.** A `NetworkMonitor` watches
+  the default network; on a change it rebuilds the transports on the new network
+  and re-advertises the feed (self-marker + server feed) without restarting the
+  camera/encoder. Debounced so a bouncing handoff reconnects once.
+
+### Orientation
+- **Auto rotation** (Rotation → *Auto*) matches the encoded video to how the phone
+  is held, driven by the device orientation sensor. Same-aspect flips update the
+  GL rotation live; a portrait ↔ landscape change re-sizes the encoder via a brief
+  restart. Manual rotations are unchanged.
+
 ## 2.2.8 — 2026-07-25
 
 This release consolidates the 1.4.x → 2.2.x line: the plugin gained full

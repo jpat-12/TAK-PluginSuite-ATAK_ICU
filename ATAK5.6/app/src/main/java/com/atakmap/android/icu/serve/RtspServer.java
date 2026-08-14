@@ -37,6 +37,22 @@ public class RtspServer {
     public void setSps(byte[] sps) { this.sps = sps; }
     public void setPps(byte[] pps) { this.pps = pps; }
 
+    // Optional second track: AAC audio (RFC 3640 mpeg4-generic), advertised in the SDP and
+    // sent to each client's audio RTP port. Absent unless setAudioConfig() is called.
+    private volatile byte[] audioAsc;
+    private volatile int    audioRate = 44100, audioChannels = 1;
+    private volatile boolean hasAudio;
+
+    /** Advertise + serve an AAC track alongside the video. Call once the AudioSpecificConfig
+     *  is known (from the encoder), before {@link #sendAudioSample}. */
+    public void setAudioConfig(byte[] asc, int sampleRate, int channels) {
+        if (asc == null || asc.length == 0) return;
+        this.audioAsc      = asc.clone();
+        this.audioRate     = sampleRate > 0 ? sampleRate : 44100;
+        this.audioChannels = channels   > 0 ? channels   : 1;
+        this.hasAudio      = true;
+    }
+
     private ServerSocket serverSocket;
     private Thread       acceptThread;
     private volatile boolean running;
@@ -55,7 +71,11 @@ public class RtspServer {
 
     public void start() throws IOException {
         running      = true;
-        serverSocket = new ServerSocket(PORT);
+        // SO_REUSEADDR + delayed bind so a restart (e.g. rebuilding transports after a network
+        // handoff) can re-listen on :8554 immediately instead of hitting "address in use".
+        serverSocket = new ServerSocket();
+        serverSocket.setReuseAddress(true);
+        serverSocket.bind(new java.net.InetSocketAddress(PORT));
         acceptThread = new Thread(() -> {
             while (running) {
                 try {
@@ -92,6 +112,24 @@ public class RtspServer {
         }
     }
 
+    /** Send one AAC access unit to every playing client that negotiated the audio track. */
+    public void sendAudioSample(byte[] aac, long ptsUs) {
+        if (!hasAudio || clients.isEmpty()) return;
+        long rtpTs = ptsUs * audioRate / 1_000_000L;   // audio RTP clock = sample rate
+        for (ClientSession c : clients) {
+            if (c.playing) c.sendAudio(aac, rtpTs);
+        }
+    }
+
+    /** Lower-case hex, used for the AAC {@code config=} SDP parameter. */
+    private static String hex(byte[] d) {
+        if (d == null) return "";
+        StringBuilder sb = new StringBuilder(d.length * 2);
+        for (byte b : d) sb.append(Character.forDigit((b >> 4) & 0xF, 16))
+                           .append(Character.forDigit(b & 0xF, 16));
+        return sb.toString();
+    }
+
     // ── Client session ────────────────────────────────────────────────────────
 
     private class ClientSession implements Runnable {
@@ -102,8 +140,12 @@ public class RtspServer {
 
         private DatagramSocket udpSocket;
         private InetAddress    clientAddr;
-        private int clientRtpPort;
+        private int pendingClientPort;                  // client_port from the last Transport header
+        private int videoClientPort = -1;
+        private int audioClientPort = -1;
         private int serverRtpPort;
+        private int audioSeq;
+        private final int audioSsrc = new Random().nextInt();
         private final int sessionId = new Random().nextInt(99999999) + 1;
 
         ClientSession(Socket s) { this.socket = s; }
@@ -134,25 +176,27 @@ public class RtspServer {
         private void processRequest(String req, PrintWriter out) {
             if (req.isEmpty()) return;
             String[] lines  = req.split("\r\n");
-            String   method = lines[0].split(" ")[0];
+            String[] first  = lines[0].split(" ");
+            String   method = first[0];
+            String   uri    = first.length > 1 ? first[1] : "";
             String   cseq   = "0";
             for (String l : lines) {
                 if (l.startsWith("CSeq:"))      cseq = l.substring(5).trim();
                 if (l.startsWith("Transport:")) parseTransport(l);
             }
             switch (method) {
-                case "OPTIONS":  handleOptions(out, cseq);  break;
-                case "DESCRIBE": handleDescribe(out, cseq); break;
-                case "SETUP":    handleSetup(out, cseq);    break;
-                case "PLAY":     handlePlay(out, cseq);     break;
-                case "TEARDOWN": handleTeardown(out, cseq); break;
+                case "OPTIONS":  handleOptions(out, cseq);      break;
+                case "DESCRIBE": handleDescribe(out, cseq);     break;
+                case "SETUP":    handleSetup(out, cseq, uri);   break;
+                case "PLAY":     handlePlay(out, cseq);         break;
+                case "TEARDOWN": handleTeardown(out, cseq);     break;
                 default:         respond(out, 405, "Method Not Allowed", cseq, ""); break;
             }
         }
 
         private void parseTransport(String line) {
             Matcher m = Pattern.compile("client_port=(\\d+)").matcher(line);
-            if (m.find()) clientRtpPort = Integer.parseInt(m.group(1));
+            if (m.find()) pendingClientPort = Integer.parseInt(m.group(1));
         }
 
         private void handleOptions(PrintWriter out, String cseq) {
@@ -167,15 +211,22 @@ public class RtspServer {
                     "\r\n" + sdp);
         }
 
-        private void handleSetup(PrintWriter out, String cseq) {
+        private void handleSetup(PrintWriter out, String cseq, String uri) {
             try {
-                udpSocket     = new DatagramSocket();
-                serverRtpPort = udpSocket.getLocalPort();
+                if (udpSocket == null) {                 // one send socket serves both tracks
+                    udpSocket     = new DatagramSocket();
+                    serverRtpPort = udpSocket.getLocalPort();
+                }
             } catch (Exception e) {
                 respond(out, 500, "Internal Error", cseq, ""); return;
             }
+            // Route this SETUP to the right track: trackID=1 is audio (when advertised), else video.
+            boolean audioTrack = hasAudio && uri != null && uri.contains("trackID=1");
+            if (audioTrack) audioClientPort = pendingClientPort;
+            else            videoClientPort = pendingClientPort;
+            int clientPort = pendingClientPort;
             respond(out, 200, "OK", cseq,
-                    "Transport: RTP/AVP;unicast;client_port=" + clientRtpPort + "-" + (clientRtpPort + 1) +
+                    "Transport: RTP/AVP;unicast;client_port=" + clientPort + "-" + (clientPort + 1) +
                     ";server_port=" + serverRtpPort + "-" + (serverRtpPort + 1) + "\r\n" +
                     "Session: " + sessionId + ";timeout=60\r\n");
         }
@@ -204,17 +255,27 @@ public class RtspServer {
         private String buildSdp() {
             String spsB64 = (sps != null) ? Base64.encodeToString(strip(sps), Base64.NO_WRAP) : "";
             String ppsB64 = (pps != null) ? Base64.encodeToString(strip(pps), Base64.NO_WRAP) : "";
-            return "v=0\r\n" +
-                   "o=- 0 0 IN IP4 0.0.0.0\r\n" +
-                   "s=ICU VideoStreamer\r\n" +
-                   "c=IN IP4 0.0.0.0\r\n" +
-                   "t=0 0\r\n" +
-                   "a=control:*\r\n" +
-                   "m=video 0 RTP/AVP 96\r\n" +
-                   "a=rtpmap:96 H264/90000\r\n" +
-                   "a=fmtp:96 profile-level-id=42A01E;packetization-mode=1;" +
-                   "sprop-parameter-sets=" + spsB64 + "," + ppsB64 + "\r\n" +
-                   "a=control:trackID=0\r\n";
+            StringBuilder sdp = new StringBuilder()
+                   .append("v=0\r\n")
+                   .append("o=- 0 0 IN IP4 0.0.0.0\r\n")
+                   .append("s=ICU VideoStreamer\r\n")
+                   .append("c=IN IP4 0.0.0.0\r\n")
+                   .append("t=0 0\r\n")
+                   .append("a=control:*\r\n")
+                   .append("m=video 0 RTP/AVP 96\r\n")
+                   .append("a=rtpmap:96 H264/90000\r\n")
+                   .append("a=fmtp:96 profile-level-id=42A01E;packetization-mode=1;")
+                   .append("sprop-parameter-sets=").append(spsB64).append(",").append(ppsB64).append("\r\n")
+                   .append("a=control:trackID=0\r\n");
+            if (hasAudio && audioAsc != null) {
+                // RFC 3640 mpeg4-generic (AAC-hbr) — config = the AudioSpecificConfig as hex.
+                sdp.append("m=audio 0 RTP/AVP 97\r\n")
+                   .append("a=rtpmap:97 mpeg4-generic/").append(audioRate).append("/").append(audioChannels).append("\r\n")
+                   .append("a=fmtp:97 streamtype=5;profile-level-id=1;mode=AAC-hbr;")
+                   .append("sizelength=13;indexlength=3;indexdeltalength=3;config=").append(hex(audioAsc)).append("\r\n")
+                   .append("a=control:trackID=1\r\n");
+            }
+            return sdp.toString();
         }
 
         // ── RTP ───────────────────────────────────────────────────────────────
@@ -226,12 +287,34 @@ public class RtspServer {
             sendRtp(nal, true, rtpTs, seq);
         }
 
+        /** Send one AAC access unit as an RFC 3640 (AAC-hbr) RTP packet on the audio track. */
+        void sendAudio(byte[] aac, long rtpTs) {
+            if (udpSocket == null || !active || audioClientPort < 0 || aac == null || aac.length == 0) return;
+            byte[] payload = new byte[4 + aac.length];
+            payload[0] = 0x00; payload[1] = 0x10;               // AU-headers-length = 16 bits
+            int hdr = (aac.length & 0x1FFF) << 3;               // 13-bit size, 3-bit index(0)
+            payload[2] = (byte) (hdr >> 8); payload[3] = (byte) hdr;
+            System.arraycopy(aac, 0, payload, 4, aac.length);
+
+            int seq = audioSeq++ & 0xFFFF;
+            byte[] p = new byte[12 + payload.length];
+            p[0]  = (byte) 0x80;
+            p[1]  = (byte) (0x80 | 97);                          // marker + payload type 97
+            p[2]  = (byte) (seq >> 8);          p[3]  = (byte) (seq & 0xFF);
+            p[4]  = (byte) (rtpTs >> 24);       p[5]  = (byte) (rtpTs >> 16);
+            p[6]  = (byte) (rtpTs >> 8);        p[7]  = (byte) (rtpTs & 0xFF);
+            p[8]  = (byte) (audioSsrc >> 24);   p[9]  = (byte) (audioSsrc >> 16);
+            p[10] = (byte) (audioSsrc >> 8);    p[11] = (byte) (audioSsrc & 0xFF);
+            System.arraycopy(payload, 0, p, 12, payload.length);
+            sendUdp(p, audioClientPort);
+        }
+
         private void sendRtp(byte[] data, boolean marker, long rtpTs, int seq) {
             int off = scLen(data);
             int len = data.length - off;
             if (len <= 0) return;
             if (len <= 1400) {
-                sendUdp(buildRtpPacket(data, off, len, seq, rtpTs, marker));
+                sendUdp(buildRtpPacket(data, off, len, seq, rtpTs, marker), videoClientPort);
             } else {
                 fuA(data, off, len, rtpTs, seq, marker);
             }
@@ -251,7 +334,7 @@ public class RtspServer {
                 byte[] payload = new byte[2 + chunk];
                 payload[0] = fuInd; payload[1] = fuHdr;
                 System.arraycopy(d, pos, payload, 2, chunk);
-                sendUdp(buildRtpPacket(payload, 0, payload.length, seq, ts, last && lastMark));
+                sendUdp(buildRtpPacket(payload, 0, payload.length, seq, ts, last && lastMark), videoClientPort);
                 first = false; pos += chunk;
             }
         }
@@ -269,8 +352,9 @@ public class RtspServer {
             return p;
         }
 
-        private void sendUdp(byte[] data) {
-            try { udpSocket.send(new DatagramPacket(data, data.length, clientAddr, clientRtpPort)); }
+        private void sendUdp(byte[] data, int port) {
+            if (port < 0) return;
+            try { udpSocket.send(new DatagramPacket(data, data.length, clientAddr, port)); }
             catch (IOException e) { Log.w(TAG, "UDP: " + e.getMessage()); }
         }
 

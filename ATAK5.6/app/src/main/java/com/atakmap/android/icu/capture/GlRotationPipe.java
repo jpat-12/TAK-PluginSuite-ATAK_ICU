@@ -64,7 +64,7 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
 
     private final Surface  outputSurface;   // encoder input
     private final int      srcW, srcH;      // camera capture buffer size
-    private final int      rotationDeg;
+    private volatile int   rotationDeg;     // live-updatable (same-aspect flips only; see setRotation)
     private final boolean  mirror;
 
     private EGLDisplay eglDisplay = EGL14.EGL_NO_DISPLAY;
@@ -132,6 +132,17 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
     public void onFrameAvailable(SurfaceTexture st) {
         if (released) return;
         handler.post(this::drawFrame);
+    }
+
+    /**
+     * Change the rotation applied to subsequent frames without rebuilding the pipe. The next
+     * {@link #drawFrame} picks up the new angle. Safe ONLY for a same-aspect change (a 180°
+     * flip, e.g. 90↔270 or 0↔180): the encoder surface / GL viewport were sized to the
+     * original aspect at start, so a portrait↔landscape swap needs a full capture restart, not
+     * this. Callers gate on {@code EncoderConfig.isLandscapeRotation}.
+     */
+    public void setRotation(int degrees) {
+        this.rotationDeg = ((degrees % 360) + 360) % 360;
     }
 
     private void drawFrame() {

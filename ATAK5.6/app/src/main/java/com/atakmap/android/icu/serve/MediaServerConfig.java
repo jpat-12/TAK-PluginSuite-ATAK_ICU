@@ -44,6 +44,33 @@ public class MediaServerConfig {
      */
     public String feedUuid = "";
 
+    // ── LAN multicast (MPEG-TS over UDP) ──────────────────────────────────────
+    // When the destination is LAN, the phone also (optionally) muxes H.264+AAC into an
+    // MPEG-TS stream and sends it to a UDP multicast group. This is the one-to-many LAN
+    // feed a receiver plays with a single URL (udp://@group:port) — ATAK's own video
+    // player, VLC and ffmpeg all read it, and unlike the on-device RTSP server it carries
+    // audio for free. Runs alongside the RTSP server so nothing existing breaks.
+
+    /** Enable the LAN multicast MPEG-TS feed (only meaningful when destination == LAN). */
+    public boolean multicastEnabled = true;
+
+    /** Multicast group address (must be in 224.0.0.0–239.255.255.255). */
+    public String multicastGroup = "239.1.1.1";
+
+    /** Multicast UDP port. */
+    public int multicastPort = 5600;
+
+    /** The URL a receiver opens to play the LAN multicast feed, e.g. {@code udp://@239.1.1.1:5600}. */
+    public String multicastUrl() {
+        return "udp://@" + multicastGroup + ":" + multicastPort;
+    }
+
+    /** True when the LAN multicast feed should run (LAN destination + enabled + a group set). */
+    public boolean multicastActive() {
+        return destination == Destination.LAN && multicastEnabled
+                && multicastGroup != null && !multicastGroup.trim().isEmpty();
+    }
+
     /** The URL the phone publishes to, per selected protocol. */
     public String pushUrl() {
         switch (pushProtocol) {
