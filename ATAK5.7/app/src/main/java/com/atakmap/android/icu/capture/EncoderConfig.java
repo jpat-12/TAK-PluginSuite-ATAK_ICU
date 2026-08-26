@@ -67,6 +67,17 @@ public class EncoderConfig {
     public boolean streamWithScreenOff = false;
 
     /**
+     * Local-recording quality override — record at a different (usually higher) quality
+     * than the stream, e.g. stream 720p15 over a constrained link but keep a 1080p30
+     * file. 0 = record the broadcast stream as-is (no second encoder, the original
+     * zero-cost tap). Non-zero values spin up a second H.264 encoder fed from the same
+     * camera; the camera then captures at the higher of the two specs. Global, not
+     * per-destination — the recording is local, so LAN/SERVER doesn't change it.
+     */
+    public int recordHeight = 0;   // 0 = same as stream, else 480/720/1080
+    public int recordFps    = 0;   // 0 = same as stream, else 15/24/30
+
+    /**
      * How often (seconds) the FOV/video detail is refreshed and force-sent on the self
      * report while broadcasting. Lower = the wedge tracks the camera sooner on peers, at
      * the cost of more frequent position reports. Default 3s.
