@@ -118,7 +118,8 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     private ImageButton broadcastButton;
     private ImageButton blackoutButton;
     private ImageButton recordButton;
-    private ImageButton snapshotButton;
+    private ImageButton destToggleButton;
+    private TextView    destToggleLabel;
     private ImageButton settingsButton;
     private TextureView previewView;
     private volatile Surface previewSurface;
@@ -149,7 +150,8 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         broadcastButton = root.findViewById(R.id.icu_broadcast_button);
         blackoutButton  = root.findViewById(R.id.icu_blackout_button);
         recordButton    = root.findViewById(R.id.icu_record_button);
-        snapshotButton  = root.findViewById(R.id.icu_snapshot_button);
+        destToggleButton = root.findViewById(R.id.icu_dest_toggle_button);
+        destToggleLabel  = root.findViewById(R.id.icu_dest_toggle_label);
         settingsButton  = root.findViewById(R.id.icu_settings_button);
 
         setupPreview();
@@ -160,6 +162,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         // during the session). atakContext() == getMapView().getContext().
         Prefs.load(atakContext(), serverConfig, config);
         refreshDestBadge();
+        refreshDestToggle();
         statusWidget.setEnabled(config.showStatusWidget);
         sensor.clearStaleFov();   // clear any FOV a prior build left stuck on the self marker
 
@@ -173,7 +176,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         broadcastButton.setOnClickListener(v -> toggleBroadcast());
         blackoutButton.setOnClickListener(v -> showBlackout());
         recordButton.setOnClickListener(v -> takeRecord());
-        snapshotButton.setOnClickListener(v -> takeSnapshot());
+        destToggleButton.setOnClickListener(v -> toggleDestination());
         settingsButton.setOnClickListener(v -> showSettingsPage());
 
         setRetain(true);
@@ -784,10 +787,17 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     // the pane closed — the record button and its label exist from construction, and the
     // headless RECORD intent (self-marker radial) lands here too.
 
-    /** Where recordings are written, under ATAK's external files directory. Named for the
-     *  plugin rather than the bare "ICU" the snapshot path uses, so the folder is
-     *  recognizable to someone browsing the device's storage. */
+    /** Where recordings are written: {@code <internal storage>/atak/ICU Video}, inside
+     *  ATAK's own data folder so the files are easy to find in any file browser (the
+     *  app-private external-files dir the old path used is hidden from most of them).
+     *  Falls back to the old location if the ATAK root isn't resolvable. */
     private java.io.File recordingsDir() {
+        try {
+            java.io.File dir = com.atakmap.coremap.filesystem.FileSystemUtils.getItem("ICU Video");
+            if (dir != null) return dir;
+        } catch (Throwable t) {
+            Log.w(TAG, "ATAK root unavailable, using app dir: " + t.getMessage());
+        }
         return new java.io.File(atakContext().getExternalFilesDir(null), "ATAK ICU/recordings");
     }
 
@@ -800,10 +810,16 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     Toast.LENGTH_LONG).show();
             return;
         }
+        String stamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+                .format(new java.util.Date());
+        java.io.File f = new java.io.File(recordingsDir(), "ICU_" + stamp + ".mp4");
+        if (pipeline.hqRecordConfigured()) startHqRecording(f);
+        else                               startStreamQualityRecording(f);
+    }
+
+    /** Original path — mux the broadcast encoder's own output (no extra cost). */
+    private void startStreamQualityRecording(java.io.File f) {
         try {
-            String stamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
-                    .format(new java.util.Date());
-            java.io.File f = new java.io.File(recordingsDir(), "ICU_" + stamp + ".mp4");
             boolean started = recorder.start(f,
                     pipeline.getEncodedWidth(), pipeline.getEncodedHeight(),
                     pipeline.getSps(), pipeline.getPps(),
@@ -829,10 +845,57 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         }
     }
 
+    /** Record-quality-override path — a second encoder at the record spec (see
+     *  {@link CapturePipeline#startHqRecord}); the MP4 opens once its SPS/PPS exist.
+     *  If the device can't run a second encoder, falls back to stream quality. */
+    private void startHqRecording(java.io.File f) {
+        pipeline.startHqRecord(new CapturePipeline.HqRecordCallback() {
+            @Override public void onReady(byte[] sps, byte[] pps, int w, int h) {
+                ui.post(() -> {
+                    try {
+                        boolean started = recorder.start(f, w, h, sps, pps,
+                                pipeline.getAudioAsc(), pipeline.getAudioSampleRate(),
+                                pipeline.getAudioChannels());
+                        if (!started) { pipeline.stopHqRecord(); return; }
+                        pipeline.setRecorder(recorder);
+                        setRecordingUi();
+                        Toast.makeText(atakContext(), "Recording to " + f.getName()
+                                + " (" + w + "x" + h + ")", Toast.LENGTH_SHORT).show();
+                    } catch (Throwable t) {
+                        Log.w(TAG, "HQ record start failed", t);
+                        pipeline.setRecorder(null);
+                        pipeline.stopHqRecord();
+                        recorder.stop();
+                        resetRecordUi();
+                        Toast.makeText(atakContext(), "Recording failed to start: "
+                                + t.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+            @Override public void onError(String message) {
+                ui.post(() -> {
+                    if (recorder.isRunning()) {
+                        // The record encoder died mid-recording — finalize what we have.
+                        Log.w(TAG, "record encoder failed mid-recording: " + message);
+                        stopRecording(true);
+                        return;
+                    }
+                    // Couldn't start at the record spec (e.g. no second hardware encoder
+                    // session available) — record at stream quality instead of not at all.
+                    pipeline.stopHqRecord();
+                    Toast.makeText(atakContext(), "High-quality recorder unavailable ("
+                            + message + ") — recording at stream quality.", Toast.LENGTH_LONG).show();
+                    startStreamQualityRecording(f);
+                });
+            }
+        });
+    }
+
     /** Finalize the MP4 and put the record button back to idle. Safe when not recording.
      *  {@code notify} shows the operator where the file went (suppressed on plugin teardown). */
     private void stopRecording(boolean notify) {
         pipeline.setRecorder(null);          // stop feeding before finalizing the file
+        pipeline.stopHqRecord();             // tear down the record encoder, if one ran
         Mp4Recorder.Result r = recorder.stop();
         stopRecordTicker();
         resetRecordUi();
@@ -948,6 +1011,39 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 ? "SERVER → " + serverConfig.host : "LAN");
     }
 
+    private void refreshDestToggle() {
+        if (destToggleLabel != null)
+            destToggleLabel.setText(serverConfig.destination
+                    == MediaServerConfig.Destination.SERVER ? "Server" : "LAN");
+    }
+
+    /** Quick-bar LAN ⇄ Server flip: switch the destination, swap in that destination's
+     *  capture/encode profile, persist, and — if live — restart the stream onto the new
+     *  destination so the toggle takes effect immediately. */
+    private void toggleDestination() {
+        boolean toServer = serverConfig.destination != MediaServerConfig.Destination.SERVER;
+        serverConfig.destination = toServer
+                ? MediaServerConfig.Destination.SERVER : MediaServerConfig.Destination.LAN;
+        applyProfile(config, Prefs.loadProfile(atakContext(), serverConfig.destination));
+        Prefs.save(atakContext(), serverConfig, config);
+        refreshDestBadge();
+        refreshDestToggle();
+        applyPreviewRotation();
+        if (toServer && !serverConfig.isConfigured()) {
+            // SERVER with no address falls back to LAN-style serving at broadcast time —
+            // say so instead of leaving the toggle looking like it did nothing useful.
+            Toast.makeText(pluginContext,
+                    "No media server configured — set the address in Settings",
+                    Toast.LENGTH_LONG).show();
+        }
+        if (pipeline.isRunning()) {
+            Toast.makeText(pluginContext, "Switching destination — restarting stream…",
+                    Toast.LENGTH_SHORT).show();
+            stopBroadcast();
+            startBroadcast();
+        }
+    }
+
     private void setStatus(String text) {
         if (statusText != null) {
             statusText.setTextColor(defaultStatusColor);
@@ -1002,27 +1098,23 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 for (int i = 0; i < camList.size(); i++) camOpts[i] = camList.get(i).label;
             }
 
-            sel[0] = serverConfig.destination == MediaServerConfig.Destination.SERVER ? 1 : 0;
+            // Each destination keeps its own capture/encode profile: the VIDEO fields below
+            // are staged against the profile for whichever destination is selected, and
+            // flipping the Destination picker swaps which profile the fields show. The
+            // active destination's profile starts from the live config; the other side
+            // comes from its last save.
+            final EncoderConfig[] profiles = new EncoderConfig[2];   // [0]=LAN [1]=SERVER
+            final int activeDest = serverConfig.destination == MediaServerConfig.Destination.SERVER ? 1 : 0;
+            profiles[activeDest] = copyProfile(config);
+            profiles[1 - activeDest] = Prefs.loadProfile(ctx, activeDest == 1
+                    ? MediaServerConfig.Destination.LAN : MediaServerConfig.Destination.SERVER);
+
+            sel[0] = activeDest;
             sel[1] = config.resolution.ordinal();
             sel[2] = fpsIndex(config.fps);
             sel[3] = rotationIndex(config.rotationDegrees);
             sel[4] = serverConfig.pushProtocol.ordinal();
-            sel[5] = 0;
-            if (!camList.isEmpty()) {
-                // Prefer an exact id match (from a prior save); otherwise fall back to
-                // the legacy front/back preference so upgrades keep their old choice.
-                int idIdx = -1, facingIdx = -1;
-                for (int i = 0; i < camList.size(); i++) {
-                    CameraSource.CameraOption opt = camList.get(i);
-                    if (opt.id.equals(config.cameraId)) { idIdx = i; break; }
-                    boolean wantFront = config.useFrontCamera;
-                    boolean isFront = opt.facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT;
-                    if (facingIdx < 0 && isFront == wantFront) facingIdx = i;
-                }
-                sel[5] = idIdx >= 0 ? idIdx : Math.max(facingIdx, 0);
-            } else {
-                sel[5] = config.useFrontCamera ? 1 : 0;
-            }
+            sel[5] = cameraIndexFor(camList, config);
             // Staged like the rest of the fields — only committed to serverConfig on Save.
             final String[] scannedPassphrase = {serverConfig.srtPassphrase};
 
@@ -1103,6 +1195,26 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             gopBtn.setOnClickListener(x -> picker(ctx, "Keyframe interval", gopOpts,
                     i -> { gopSel[0] = i; gopBtn.setText(gopOpts[i]); }));
 
+            // Record-quality override — record locally at a different spec than the
+            // stream (e.g. stream 720p15, keep a 1080p30 file). Global, not per-
+            // destination: the file is local either way. "Same as stream" = the
+            // original zero-cost tap of the broadcast encoder.
+            final CharSequence[] recResOpts = { "Same as stream", "480p", "720p", "1080p" };
+            final int[] recResVals = { 0, 480, 720, 1080 };
+            int rri = 0; for (int i = 0; i < recResVals.length; i++) if (recResVals[i] == config.recordHeight) rri = i;
+            final int[] recResSel = { rri };
+            final Button recResBtn = addPicker(ctx, videoCard, "Record resolution", recResOpts[recResSel[0]]);
+            recResBtn.setOnClickListener(x -> picker(ctx, "Record resolution", recResOpts,
+                    i -> { recResSel[0] = i; recResBtn.setText(recResOpts[i]); }));
+
+            final CharSequence[] recFpsOpts = { "Same as stream", "15 fps", "24 fps", "30 fps" };
+            final int[] recFpsVals = { 0, 15, 24, 30 };
+            int rfi = 0; for (int i = 0; i < recFpsVals.length; i++) if (recFpsVals[i] == config.recordFps) rfi = i;
+            final int[] recFpsSel = { rfi };
+            final Button recFpsBtn = addPicker(ctx, videoCard, "Record frame rate", recFpsOpts[recFpsSel[0]]);
+            recFpsBtn.setOnClickListener(x -> picker(ctx, "Record frame rate", recFpsOpts,
+                    i -> { recFpsSel[0] = i; recFpsBtn.setText(recFpsOpts[i]); }));
+
             // How often the FOV wedge is refreshed + force-sent to peers (seconds).
             final EditText fovRefresh = addEdit(ctx, videoCard, "FOV update (sec)",
                     Integer.toString(config.fovRefreshSec), android.text.InputType.TYPE_CLASS_NUMBER);
@@ -1128,8 +1240,43 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             final Button screenBtn = addPicker(ctx, dispCard, "Keep streaming when screen off",
                     screenOpts[screenSel[0]]);
 
+            // Read the on-screen VIDEO fields into the profile for the currently selected
+            // destination (sel[0]) — called before flipping destinations and on Save.
+            final Runnable stashVideo = () -> {
+                EncoderConfig p = profiles[sel[0]];
+                p.resolution = EncoderConfig.Resolution.values()[sel[1]];
+                p.fps = intOf(fpsOpts[sel[2]].toString(), 30);
+                p.bitrateKbps = intOf(bitrate, 2500);
+                p.rotationDegrees = rotationValue(sel[3]);
+                if (!camList.isEmpty()) {
+                    CameraSource.CameraOption opt = camList.get(
+                            Math.max(0, Math.min(sel[5], camList.size() - 1)));
+                    p.cameraId = opt.id;
+                    p.useFrontCamera =
+                            opt.facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT;
+                } else {
+                    p.cameraId = "";
+                    p.useFrontCamera = sel[5] == 1;
+                }
+                p.gopSeconds = gopVals[gopSel[0]];
+                p.streamAudio = audioSel[0] == 1;
+            };
+            // Push the profile for the newly selected destination into the VIDEO fields.
+            final Runnable bindVideo = () -> {
+                EncoderConfig p = profiles[sel[0]];
+                sel[1] = p.resolution.ordinal();          resBtn.setText(resOpts[sel[1]]);
+                sel[2] = fpsIndex(p.fps);                 fpsBtn.setText(fpsOpts[sel[2]]);
+                bitrate.setText(Integer.toString(p.bitrateKbps));
+                sel[3] = rotationIndex(p.rotationDegrees); rotBtn.setText(rotOpts[sel[3]]);
+                sel[5] = cameraIndexFor(camList, p);      camBtn.setText(camOpts[sel[5]]);
+                int g = 1; for (int i = 0; i < gopVals.length; i++) if (gopVals[i] == p.gopSeconds) g = i;
+                gopSel[0] = g;                            gopBtn.setText(gopOpts[g]);
+                audioSel[0] = p.streamAudio ? 1 : 0;      audioBtn.setText(audioOpts[audioSel[0]]);
+            };
+
             destBtn.setOnClickListener(x -> picker(ctx, ps(R.string.icu_destination), destOpts, i -> {
-                sel[0] = i; destBtn.setText(destOpts[i]);
+                if (i != sel[0]) { stashVideo.run(); sel[0] = i; bindVideo.run(); }
+                destBtn.setText(destOpts[i]);
                 srv.setVisibility(i == 1 ? View.VISIBLE : View.GONE);
             }));
             protoBtn.setOnClickListener(x -> picker(ctx, ps(R.string.icu_protocol), protoOpts, i -> {
@@ -1162,7 +1309,8 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                             // the per-device stream path and alias — which default to the
                             // operator callsign (see defaultPath()/defaultAlias()) precisely
                             // so operators don't collide on the server.
-                            sel[0] = 1; destBtn.setText(destOpts[1]); srv.setVisibility(View.VISIBLE);
+                            if (sel[0] != 1) { stashVideo.run(); sel[0] = 1; bindVideo.run(); }
+                            destBtn.setText(destOpts[1]); srv.setVisibility(View.VISIBLE);
                             sel[4] = p.protocol.ordinal(); protoBtn.setText(protoOpts[sel[4]]);
                             address.setText(p.host);
                             port.setText(Integer.toString(p.port));
@@ -1212,31 +1360,26 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 serverConfig.username = str(user, "");
                 serverConfig.password = str(pass, "");
                 serverConfig.srtPassphrase = scannedPassphrase[0];
-                config.resolution = EncoderConfig.Resolution.values()[sel[1]];
-                config.fps = intOf(fpsOpts[sel[2]].toString(), 30);
-                config.bitrateKbps = intOf(bitrate, 2500);
-                config.rotationDegrees = rotationValue(sel[3]);
-                if (!camList.isEmpty()) {
-                    CameraSource.CameraOption opt = camList.get(
-                            Math.max(0, Math.min(sel[5], camList.size() - 1)));
-                    config.cameraId = opt.id;
-                    config.useFrontCamera =
-                            opt.facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT;
-                } else {
-                    config.cameraId = "";
-                    config.useFrontCamera = sel[5] == 1;
-                }
-                config.gopSeconds = gopVals[gopSel[0]];
+                stashVideo.run();
+                applyProfile(config, profiles[sel[0]]);
+                config.recordHeight = recResVals[recResSel[0]];
+                config.recordFps = recFpsVals[recFpsSel[0]];
                 config.fovRefreshSec = Math.max(1, intOf(fovRefresh, 3));
                 config.fovRangeM = Math.max(1, intOf(fovRange, 100));
-                config.streamAudio = audioSel[0] == 1;
                 config.showStatusWidget = widgetSel[0] == 0;
                 config.streamWithScreenOff = screenSel[0] == 1;
 
+                // Persist the active destination's profile (with the server + global
+                // fields), then the other destination's — edits made while it was
+                // selected must survive even though it isn't the one being used.
                 Prefs.save(atakContext(), serverConfig, config);
+                Prefs.saveProfile(atakContext(), sel[0] == 1
+                        ? MediaServerConfig.Destination.LAN : MediaServerConfig.Destination.SERVER,
+                        profiles[1 - sel[0]]);
                 statusWidget.setEnabled(config.showStatusWidget);
                 if (pipeline.isRunning()) root.setKeepScreenOn(!config.streamWithScreenOff);
                 refreshDestBadge();
+                refreshDestToggle();
                 applyPreviewRotation();
                 hideSettingsPage();
                 if (pipeline.isRunning()) {
@@ -1467,6 +1610,41 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     private static int intOf(EditText e, int def) { return intOf(e.getText().toString(), def); }
     private static int intOf(String s, int def) {
         try { return Integer.parseInt(s.trim()); } catch (Exception e) { return def; }
+    }
+
+    /** Copy the per-destination capture/encode fields of {@code src} onto {@code dst}
+     *  (globals like FOV/status-badge/screen-off are left alone). */
+    private static void applyProfile(EncoderConfig dst, EncoderConfig src) {
+        dst.resolution      = src.resolution;
+        dst.fps             = src.fps;
+        dst.bitrateKbps     = src.bitrateKbps;
+        dst.useFrontCamera  = src.useFrontCamera;
+        dst.cameraId        = src.cameraId;
+        dst.rotationDegrees = src.rotationDegrees;
+        dst.gopSeconds      = src.gopSeconds;
+        dst.streamAudio     = src.streamAudio;
+    }
+
+    /** The per-destination capture/encode fields of {@code src}, as a fresh instance. */
+    private static EncoderConfig copyProfile(EncoderConfig src) {
+        EncoderConfig p = new EncoderConfig();
+        applyProfile(p, src);
+        return p;
+    }
+
+    /** Index of {@code p}'s camera in {@code camList} (or the legacy front/back index).
+     *  Prefer an exact id match (from a prior save); otherwise fall back to the
+     *  front/back preference so upgrades keep their old choice. */
+    private static int cameraIndexFor(List<CameraSource.CameraOption> camList, EncoderConfig p) {
+        if (camList.isEmpty()) return p.useFrontCamera ? 1 : 0;
+        int idIdx = -1, facingIdx = -1;
+        for (int i = 0; i < camList.size(); i++) {
+            CameraSource.CameraOption opt = camList.get(i);
+            if (opt.id.equals(p.cameraId)) { idIdx = i; break; }
+            boolean isFront = opt.facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT;
+            if (facingIdx < 0 && isFront == p.useFrontCamera) facingIdx = i;
+        }
+        return idIdx >= 0 ? idIdx : Math.max(facingIdx, 0);
     }
 
     // ── Permissions ──────────────────────────────────────────────────────────────

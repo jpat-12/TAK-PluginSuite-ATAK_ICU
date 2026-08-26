@@ -13,6 +13,7 @@
     <string name="icu_recording">Recording</string>
     <string name="icu_snapshot">Snapshot</string>
     <string name="icu_blackout">Blackout</string>
+    <string name="icu_dest_toggle">LAN/Server</string>
 
     <!-- Settings -->
     <string name="icu_settings_title">Broadcast Settings</string>

@@ -139,15 +139,6 @@
 
                 <LinearLayout style="@style/IcuQuickItemVertical">
                     <ImageButton
-                        android:id="@+id/icu_blackout_button"
-                        style="@style/IcuQuickButton"
-                        android:src="@drawable/ic_blackout"
-                        android:contentDescription="@string/icu_blackout" />
-                    <TextView style="@style/IcuQuickLabel" android:text="@string/icu_blackout" />
-                </LinearLayout>
-
-                <LinearLayout style="@style/IcuQuickItemVertical">
-                    <ImageButton
                         android:id="@+id/icu_record_button"
                         style="@style/IcuQuickButton"
                         android:src="@drawable/ic_record"
@@ -156,13 +147,24 @@
                         android:text="@string/icu_record" />
                 </LinearLayout>
 
+                <!-- Quick LAN ⇄ Server destination toggle; label mirrors the active side. -->
+                <LinearLayout style="@style/IcuQuickItemVertical">
+                    <ImageButton
+                        android:id="@+id/icu_dest_toggle_button"
+                        style="@style/IcuQuickButton"
+                        android:src="@drawable/ic_dest_toggle"
+                        android:contentDescription="@string/icu_dest_toggle" />
+                    <TextView android:id="@+id/icu_dest_toggle_label" style="@style/IcuQuickLabel"
+                        android:text="@string/icu_dest_toggle" />
+                </LinearLayout>
+
                 <LinearLayout style="@style/IcuQuickItemVertical" android:layout_marginBottom="0dp">
                     <ImageButton
-                        android:id="@+id/icu_snapshot_button"
+                        android:id="@+id/icu_blackout_button"
                         style="@style/IcuQuickButton"
-                        android:src="@drawable/ic_snapshot"
-                        android:contentDescription="@string/icu_snapshot" />
-                    <TextView style="@style/IcuQuickLabel" android:text="@string/icu_snapshot" />
+                        android:src="@drawable/ic_blackout"
+                        android:contentDescription="@string/icu_blackout" />
+                    <TextView style="@style/IcuQuickLabel" android:text="@string/icu_blackout" />
                 </LinearLayout>
 
             </LinearLayout>
