@@ -1,6 +1,31 @@
 # Changelog
 
-## Unreleased
+## 3.0.0 — 2026-08-25
+
+### ATAK-ICU 5.7 tree
+- **Per-destination camera settings.** LAN and Media Server each keep their own
+  persistent capture/encode profile (resolution, fps, bitrate, camera, rotation,
+  keyframe interval, mic audio); the settings dialog swaps the VIDEO fields as
+  the Destination picker flips, and an upgrade seeds both profiles from the old
+  flat settings.
+- **Quick-bar rework.** Broadcast / Record / LAN⇄Server toggle / Blackout. The
+  toggle flips destination in one tap (restarting a live stream onto the new
+  destination); snapshot moved to the self-marker radial only. Buttons resized
+  so all four fit a 1080p phone.
+- **Record at a different quality than the stream.** New "Record resolution" /
+  "Record frame rate" settings spin up a second on-demand H.264 encoder — e.g.
+  stream 720p15 over a constrained link while the local file gets 1080p30.
+  Device-verified: 960x720@15 stream alongside a 1440x1080@30 / 4.4 Mbps file.
+- **Recordings moved to `<internal storage>/atak/ICU Video`** so they're
+  visible to normal file browsers.
+- **"Auto — match ATAK" orientation** (new default): capture rotation follows
+  the host's display orientation, including ATAK's force-portrait/landscape
+  setting; a mid-broadcast flip restarts the stream in the new orientation.
+- **Map status badge is actually tappable**: hit box widened past the icon
+  bitmap and across the dot/LIVE label; overlay widgets no longer swallow taps.
+- **tools/icu-qr-generator.html** — offline, self-contained page that generates
+  the server-provisioning QR (server/port/credentials only; every device keeps
+  its callsign-derived alias and stream path).
 
 ### ATAK-ICU features (both 5.6 and 5.7 trees)
 - **The broadcast survives a network change.** Switching Wi-Fi to LTE, or hopping
