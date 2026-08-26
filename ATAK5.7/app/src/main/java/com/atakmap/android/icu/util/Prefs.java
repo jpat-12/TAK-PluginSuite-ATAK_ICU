@@ -65,6 +65,7 @@ public final class Prefs {
         enc.fovRangeM      = sp.getInt("fov_range_m", 100);
         enc.recordHeight   = sp.getInt("record_height", 0);
         enc.recordFps      = sp.getInt("record_fps", 0);
+        enc.networkCameraUrl = sp.getString("net_camera_url", "rtsp://172.20.1.1:554/stream1");
 
         loadProfileInto(sp, srv.destination, enc);
     }
@@ -115,7 +116,9 @@ public final class Prefs {
                 .putInt("fov_refresh_sec", enc.fovRefreshSec)
                 .putInt("fov_range_m", enc.fovRangeM)
                 .putInt("record_height", enc.recordHeight)
-                .putInt("record_fps", enc.recordFps);
+                .putInt("record_fps", enc.recordFps)
+                .putString("net_camera_url",
+                        enc.networkCameraUrl == null ? "" : enc.networkCameraUrl.trim());
         putProfile(e, srv.destination, enc);
         e.commit();
     }

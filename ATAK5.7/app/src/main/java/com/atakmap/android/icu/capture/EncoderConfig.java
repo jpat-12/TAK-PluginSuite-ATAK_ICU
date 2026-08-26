@@ -47,6 +47,14 @@ public class EncoderConfig {
     /** Sentinel {@link #cameraId} value selecting the direct UVC (USB) capture path. */
     public static final String CAMERA_ID_USB = "usb";
 
+    /** Sentinel {@link #cameraId} selecting a network (IP) camera — an RTSP pull from
+     *  {@link #networkCameraUrl} decoded into the pipeline (see NetworkCameraSource). */
+    public static final String CAMERA_ID_NETWORK = "network";
+
+    /** RTSP URL of the network camera (used when {@link #cameraId} is
+     *  {@link #CAMERA_ID_NETWORK}). Global — one camera rig, not per-destination. */
+    public String networkCameraUrl = "rtsp://172.20.1.1:554/stream1";
+
     /**
      * Extra rotation applied to the preview (and, best-effort, the encoded stream).
      * -1 = Auto — follow the host ATAK activity's current display orientation,

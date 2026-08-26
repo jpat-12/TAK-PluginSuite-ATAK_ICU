@@ -50,6 +50,7 @@ public class CapturePipeline {
     private final H264Encoder encoder = new H264Encoder();
     private final CameraSource camera = new CameraSource();
     private final UsbCameraSource usbCamera = new UsbCameraSource();
+    private final NetworkCameraSource netCamera = new NetworkCameraSource();
     private final AacEncoder   audio  = new AacEncoder();
     private GlRotationPipe      glPipe;   // rotates camera → encoder pixels (null = no rotation)
 
@@ -65,6 +66,10 @@ public class CapturePipeline {
     private final AtomicInteger nalCount = new AtomicInteger();
     private volatile boolean running;
     private volatile boolean usingUsbCamera;
+    private volatile boolean usingNetworkCamera;
+    /** Network-camera mode only: the preview is a GL output (the decoder can render to
+     *  just one surface), tracked so setPreviewSurface can swap it while live. */
+    private Surface netPreviewSurface;
     private volatile byte[] sps;
     private volatile byte[] pps;
     private volatile byte[] audioAsc;
@@ -97,8 +102,12 @@ public class CapturePipeline {
     public static void resolveCaptureSize(Context ctx, EncoderConfig config) {
         // With a record-quality override the camera captures at the LARGER of the stream
         // and record heights; the GL stage scales each encoder's copy to its own size.
+        // USB and network sources aren't queryable up front, so they get the same
+        // 16:9-at-target-height assumption (GL scales whatever actually arrives).
         int targetH = Math.max(config.resolution.h, config.recordHeight);
-        int[] cap = EncoderConfig.CAMERA_ID_USB.equals(config.cameraId)
+        boolean unqueryable = EncoderConfig.CAMERA_ID_USB.equals(config.cameraId)
+                || EncoderConfig.CAMERA_ID_NETWORK.equals(config.cameraId);
+        int[] cap = unqueryable
                 ? new int[]{ (targetH * 16) / 9, targetH }
                 : CameraSource.chooseNativeCaptureSize(
                         ctx, config.cameraId, config.useFrontCamera, targetH);
@@ -139,6 +148,7 @@ public class CapturePipeline {
         nalCount.set(0);
         audioAsc = null;   // audio may be off this run — don't carry the last run's config
         usingUsbCamera = EncoderConfig.CAMERA_ID_USB.equals(config.cameraId);
+        usingNetworkCamera = EncoderConfig.CAMERA_ID_NETWORK.equals(config.cameraId);
 
         resolveCaptureSize(ctx, config);
         Log.d(TAG, "native capture size " + config.captureW + "x" + config.captureH);
@@ -154,10 +164,16 @@ public class CapturePipeline {
         final int camFps   = hqRecord ? Math.max(config.fps, recFps) : config.fps;
         // Pin Auto rotation to a concrete value for this broadcast — everything below
         // (encoder surface sizing, GL rotation, recording) needs the same answer.
-        final int rot      = resolveRotation(ctx, config);
+        // A network camera's decoded frames are already upright landscape, so the GL
+        // stage applies no rotation (and no sensor transpose); the encoders get 270
+        // ("landscape") so their surfaces stay landscape-shaped. The Orientation
+        // setting deliberately doesn't apply — the camera's mounting, not the phone's,
+        // decides a network feed's orientation.
+        final int rot    = usingNetworkCamera ? 0   : resolveRotation(ctx, config);
+        final int encRot = usingNetworkCamera ? 270 : rot;
 
         EncoderConfig streamCfg = cloneOf(config);
-        streamCfg.rotationDegrees = rot;
+        streamCfg.rotationDegrees = encRot;
         if (config.captureH != streamH && config.captureH > 0) {
             streamCfg.captureH = streamH;
             streamCfg.captureW = even(config.captureW * streamH / config.captureH);
@@ -197,8 +213,9 @@ public class CapturePipeline {
         // surface. On any GL failure, fall back to feeding the encoder directly (no rotation).
         Surface cameraTarget = encoderSurface;
         glPipe = new GlRotationPipe(encoderSurface, config.captureW, config.captureH,
-                rot, config.useFrontCamera,
-                camFps > config.fps ? config.fps : 0);
+                rot, !usingNetworkCamera && config.useFrontCamera,
+                camFps > config.fps ? config.fps : 0,
+                !usingNetworkCamera);
         Surface glInput = glPipe.start();
         if (glInput != null) {
             cameraTarget = glInput;
@@ -212,7 +229,7 @@ public class CapturePipeline {
         // recording silently falls back to the stream-quality tap.
         if (hqRecord && glPipe != null) {
             recordCfg = cloneOf(config);
-            recordCfg.rotationDegrees = rot;
+            recordCfg.rotationDegrees = encRot;
             recordCfg.captureH = recH;
             recordCfg.captureW = even(config.captureW * recH / config.captureH);
             recordCfg.fps = recFps;
@@ -231,7 +248,22 @@ public class CapturePipeline {
         EncoderConfig camCfg = cloneOf(config);
         camCfg.fps = camFps;
 
-        if (usingUsbCamera) {
+        if (usingNetworkCamera) {
+            // The decoder renders to ONE surface (the GL input); the local preview rides
+            // the GL stage as an extra output instead.
+            if (glPipe != null && preview != null && glPipe.addOutput(preview))
+                netPreviewSurface = preview;
+            netCamera.start(config.networkCameraUrl, cameraTarget, new NetworkCameraSource.Callback() {
+                @Override public void onError(String message) {
+                    running = false;
+                    stop();
+                    listener.onError(message);
+                }
+                @Override public void onOpened() {
+                    listener.onSourceOpened();
+                }
+            });
+        } else if (usingUsbCamera) {
             usbCamera.start(ctx, cameraTarget, preview, new UsbCameraSource.Callback() {
                 @Override public void onError(String message) {
                     running = false;
@@ -292,6 +324,8 @@ public class CapturePipeline {
         audio.stop();
         camera.stop();                 // stop feeding the GL input first…
         usbCamera.stop();
+        netCamera.stop();
+        netPreviewSurface = null;      // its GL output dies with the pipe below
         if (glPipe != null) { glPipe.release(); glPipe = null; }   // …then tear down GL…
         encoder.stop();                // …then the encoder it fed
     }
@@ -384,6 +418,7 @@ public class CapturePipeline {
         c.gopSeconds      = src.gopSeconds;
         c.useFrontCamera  = src.useFrontCamera;
         c.cameraId        = src.cameraId;
+        c.networkCameraUrl = src.networkCameraUrl;
         c.rotationDegrees = src.rotationDegrees;
         c.showStatusWidget = src.showStatusWidget;
         c.streamAudio     = src.streamAudio;
@@ -402,6 +437,13 @@ public class CapturePipeline {
      */
     public void setPreviewSurface(Surface preview) {
         if (!running) return;
+        if (usingNetworkCamera) {
+            if (glPipe == null) return;
+            if (netPreviewSurface != null) glPipe.removeOutput(netPreviewSurface);
+            netPreviewSurface = null;
+            if (preview != null && glPipe.addOutput(preview)) netPreviewSurface = preview;
+            return;
+        }
         if (usingUsbCamera) usbCamera.setPreviewSurface(preview);
         else camera.setPreviewSurface(preview);
     }
@@ -437,6 +479,7 @@ public class CapturePipeline {
     public void captureStill(int jpegOrientation, CameraSource.StillCallback cb) {
         if (!running) { cb.onStillError("not broadcasting"); return; }
         if (usingUsbCamera) { cb.onStillError("Snapshot isn't supported on a USB camera yet"); return; }
+        if (usingNetworkCamera) { cb.onStillError("Snapshot isn't supported on a network camera yet"); return; }
         camera.captureStill(jpegOrientation, cb);
     }
 }

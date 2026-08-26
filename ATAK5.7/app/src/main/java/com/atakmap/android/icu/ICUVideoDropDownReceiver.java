@@ -30,6 +30,7 @@ import com.atakmap.android.icu.capture.CameraSource;
 import com.atakmap.android.icu.capture.CapturePipeline;
 import com.atakmap.android.icu.capture.EncoderConfig;
 import com.atakmap.android.icu.capture.Mp4Recorder;
+import com.atakmap.android.icu.capture.NetworkCameraDiscovery;
 import com.atakmap.android.icu.plugin.R;
 import com.atakmap.android.icu.serve.MediaServerConfig;
 import com.atakmap.android.icu.serve.OnDeviceRtspTransport;
@@ -41,6 +42,7 @@ import com.atakmap.android.icu.serve.TransportManager;
 import com.atakmap.android.icu.share.SelfMarkerFov;
 import com.atakmap.android.icu.ui.StreamStatusWidget;
 import com.atakmap.android.icu.ui.qr.QrScanDialog;
+import com.atakmap.android.icu.util.DiagLog;
 import com.atakmap.android.icu.util.NetworkMonitor;
 import com.atakmap.android.icu.util.Prefs;
 import com.atakmap.android.icu.util.StreamUrlParser;
@@ -161,6 +163,14 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         // so they're lost on restart (values only survive in the in-memory cache
         // during the session). atakContext() == getMapView().getContext().
         Prefs.load(atakContext(), serverConfig, config);
+        // Persistent field log (<atak>/ICU Video/logs/icu-diag.log) — diagnosable runs
+        // with no adb attached, which is the norm when ethernet owns the USB port.
+        try {
+            DiagLog.init(new java.io.File(
+                    com.atakmap.coremap.filesystem.FileSystemUtils.getItem("ICU Video"), "logs"));
+        } catch (Throwable t) {
+            Log.w(TAG, "diag log unavailable: " + t.getMessage());
+        }
         refreshDestBadge();
         refreshDestToggle();
         statusWidget.setEnabled(config.showStatusWidget);
@@ -262,6 +272,19 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         st.setDefaultBufferSize(config.captureW, config.captureH);
     }
 
+    /** Put a discovered camera URL into the settings field (still staged — the operator
+     *  Saves to commit it, same as typing). Auth-demanding cameras get a nudge to add
+     *  credentials to the URL, after which "Find camera" can resolve the path too. */
+    private void applyDiscoveredCamera(Context ctx, EditText netUrl,
+                                       NetworkCameraDiscovery.Result r) {
+        netUrl.setText(r.url);
+        Toast.makeText(ctx, r.needsAuth
+                ? "Camera found at " + r.url + " but it requires credentials — add "
+                        + "rtsp://user:pass@… to the URL and tap Find again for the path."
+                : "Camera found: " + r.url + " — Save to use it.",
+                Toast.LENGTH_LONG).show();
+    }
+
     /** The rotation in effect right now: the manual setting, or — on "Auto — match
      *  ATAK" — derived from the host activity's current display rotation, which is
      *  what ATAK's force-portrait/landscape preference drives. */
@@ -311,12 +334,29 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
      *  actually broadcast.</p> */
     private void applyPreviewRotation() {
         if (previewView == null) return;
-        previewView.setScaleX(config.useFrontCamera ? -1f : 1f);   // mirror front camera
+        boolean netCam = EncoderConfig.CAMERA_ID_NETWORK.equals(config.cameraId);
+        previewView.setScaleX(!netCam && config.useFrontCamera ? -1f : 1f);   // mirror front camera
 
         int vw = previewView.getWidth();
         int vh = previewView.getHeight();
         if (vw == 0 || vh == 0) {           // not laid out yet — retry after layout
             previewView.post(this::applyPreviewRotation);
+            return;
+        }
+
+        if (netCam) {
+            // The GL stage renders the network feed into the preview buffer already
+            // upright and landscape (buffer = captureW×captureH), so the only transform
+            // needed is undoing the buffer→view stretch and letterboxing — no rotation.
+            float cx = vw / 2f, cy = vh / 2f;
+            RectF viewRect = new RectF(0, 0, vw, vh);
+            RectF srcRect = new RectF(0, 0, config.captureW, config.captureH);
+            srcRect.offset(cx - srcRect.centerX(), cy - srcRect.centerY());
+            Matrix nm = new Matrix();
+            nm.setRectToRect(viewRect, srcRect, Matrix.ScaleToFit.FILL);
+            float ns = Math.min(vw / (float) config.captureW, vh / (float) config.captureH);
+            nm.postScale(ns, ns, cx, cy);
+            previewView.setTransform(nm);
             return;
         }
 
@@ -356,7 +396,9 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     ps(R.string.icu_stop), this::stopBroadcast);
             return;
         }
-        if (!hasCameraPermission()) { requestCameraPermission(); return; }
+        // A network camera needs no camera permission — the phone's own camera stays off.
+        boolean netCam = EncoderConfig.CAMERA_ID_NETWORK.equals(config.cameraId);
+        if (!netCam && !hasCameraPermission()) { requestCameraPermission(); return; }
         // Mic is only needed when the operator turned on audio; request it up front so the
         // AAC track can start. (Turn the audio setting off to broadcast video-only instead.)
         if (config.streamAudio && !hasMicPermission()) { requestMicPermission(); return; }
@@ -384,6 +426,9 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     }
 
     private void startBroadcast() {
+        DiagLog.d(TAG, "startBroadcast camera=" + (config.cameraId.isEmpty() ? "auto" : config.cameraId)
+                + " dest=" + serverConfig.destination
+                + " " + config.resolution.label + "@" + config.fps);
         authFailureHandled = false;
         setStatus("Starting camera…");
         broadcastButton.setEnabled(false);
@@ -511,10 +556,20 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
     private void armFeedWatchdog() {
         cancelFeedWatchdog();
-        if (!EncoderConfig.CAMERA_ID_USB.equals(config.cameraId)) return;
+        boolean usb = EncoderConfig.CAMERA_ID_USB.equals(config.cameraId);
+        boolean net = EncoderConfig.CAMERA_ID_NETWORK.equals(config.cameraId);
+        if (!usb && !net) return;
         feedWatchdog = () -> {
             feedWatchdog = null;
-            if (shouldFallBackFromUsb()) fallbackToDeviceCamera("no video from the USB camera");
+            if (shouldFallBackFromUsb()) { fallbackToDeviceCamera("no video from the USB camera"); return; }
+            // Network camera: the RTSP session opened but nothing decodable arrived —
+            // wrong path, a non-H.264 stream, or video on a codec we don't handle. No
+            // fallback to the phone camera here: the operator picked a remote source on
+            // purpose, and silently switching viewpoints would be worse than stopping.
+            if (net && pipeline.isRunning() && transports != null) {
+                stopBroadcast();
+                setStatusError("No video from the network camera — check the RTSP URL (H.264 only)");
+            }
         };
         ui.postDelayed(feedWatchdog, USB_FEED_TIMEOUT_MS);
     }
@@ -551,6 +606,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     }
 
     private void stopBroadcast() {
+        DiagLog.d(TAG, "stopBroadcast");
         cancelFeedWatchdog();
         // Recording rides this broadcast's encoder, so it ends with it — finalize the MP4
         // before the encoder goes away rather than leaving a truncated file.
@@ -1133,6 +1189,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             // Camera2 saw anything.
             final List<CameraSource.CameraOption> camList = CameraSource.listCameras(ctx);
             camList.add(CameraSource.usbOption());
+            camList.add(CameraSource.networkOption());
             final CharSequence[] camOpts;
             if (camList.isEmpty()) {
                 camOpts = pta(R.array.icu_cameras);   // fallback: legacy front/back toggle
@@ -1228,6 +1285,51 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     Integer.toString(config.bitrateKbps), android.text.InputType.TYPE_CLASS_NUMBER);
             final Button rotBtn = addPicker(ctx, videoCard, ps(R.string.icu_rotation), rotOpts[sel[3]]);
             final Button camBtn = addPicker(ctx, videoCard, ps(R.string.icu_camera), camOpts[sel[5]]);
+
+            // RTSP URL for the "Network camera (RTSP)" source — e.g. a MOHOC on the
+            // radio mesh. Global (one camera rig), used only when that source is picked.
+            final EditText netUrl = addEdit(ctx, videoCard, "Network camera URL (rtsp)",
+                    config.networkCameraUrl,
+                    android.text.InputType.TYPE_TEXT_VARIATION_URI | android.text.InputType.TYPE_CLASS_TEXT);
+
+            // Auto-discovery so the URL doesn't have to be hand-typed: multicast probes
+            // (ONVIF/SSDP) + a local-subnet RTSP sweep find hosts, then a DESCRIBE sweep
+            // finds the stream path. Typing just an IP above and tapping this resolves
+            // the full URL too.
+            final Button findCamBtn = addSecondaryButton(ctx, videoCard, "Find camera on network");
+            findCamBtn.setOnClickListener(x -> {
+                findCamBtn.setEnabled(false);
+                findCamBtn.setText("Scanning…");
+                String hint = netUrl.getText().toString().trim();
+                if (!hint.isEmpty() && !hint.contains("://")) hint = "rtsp://" + hint;
+                NetworkCameraDiscovery.discover(ctx, hint, new NetworkCameraDiscovery.Listener() {
+                    @Override public void onProgress(String status) {
+                        ui.post(() -> findCamBtn.setText(status));
+                    }
+                    @Override public void onDone(java.util.List<NetworkCameraDiscovery.Result> results) {
+                        ui.post(() -> {
+                            findCamBtn.setEnabled(true);
+                            findCamBtn.setText("Find camera on network");
+                            if (results.isEmpty()) {
+                                Toast.makeText(ctx, "No RTSP cameras found — check the camera is "
+                                        + "powered and on this network, or enter its IP above and "
+                                        + "try again.", Toast.LENGTH_LONG).show();
+                                return;
+                            }
+                            if (results.size() == 1) {
+                                applyDiscoveredCamera(ctx, netUrl, results.get(0));
+                                return;
+                            }
+                            CharSequence[] labels = new CharSequence[results.size()];
+                            for (int i = 0; i < results.size(); i++)
+                                labels[i] = results.get(i).url
+                                        + (results.get(i).needsAuth ? "  (requires credentials)" : "");
+                            picker(ctx, "Cameras found", labels,
+                                    i -> applyDiscoveredCamera(ctx, netUrl, results.get(i)));
+                        });
+                    }
+                });
+            });
 
             // Keyframe (GOP) interval — short values keep browser/HLS players near live.
             final CharSequence[] gopOpts = { "1 s (browser-friendly)", "2 s", "4 s" };
@@ -1407,6 +1509,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 applyProfile(config, profiles[sel[0]]);
                 config.recordHeight = recResVals[recResSel[0]];
                 config.recordFps = recFpsVals[recFpsSel[0]];
+                config.networkCameraUrl = str(netUrl, "rtsp://172.20.1.1:554/stream1");
                 config.fovRefreshSec = Math.max(1, intOf(fovRefresh, 3));
                 config.fovRangeM = Math.max(1, intOf(fovRange, 100));
                 config.showStatusWidget = widgetSel[0] == 0;

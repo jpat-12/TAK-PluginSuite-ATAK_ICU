@@ -87,6 +87,7 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
     private final int      srcW, srcH;      // camera capture buffer size
     private final int      rotationDeg;
     private final boolean  mirror;
+    private final boolean  srcTransposed;   // sensor-mounted-90° source (see constructor)
 
     private EGLDisplay eglDisplay = EGL14.EGL_NO_DISPLAY;
     private EGLContext eglContext = EGL14.EGL_NO_CONTEXT;
@@ -114,18 +115,29 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
 
     public GlRotationPipe(Surface encoderInput, int srcWidth, int srcHeight,
                           int rotationDegrees, boolean mirror) {
-        this(encoderInput, srcWidth, srcHeight, rotationDegrees, mirror, 0);
+        this(encoderInput, srcWidth, srcHeight, rotationDegrees, mirror, 0, true);
+    }
+
+    public GlRotationPipe(Surface encoderInput, int srcWidth, int srcHeight,
+                          int rotationDegrees, boolean mirror, int fpsLimit) {
+        this(encoderInput, srcWidth, srcHeight, rotationDegrees, mirror, fpsLimit, true);
     }
 
     /** @param fpsLimit cap on the PRIMARY output's frame rate (0 = present every camera
-     *                  frame) — used when the camera runs faster than the stream wants. */
+     *                  frame) — used when the camera runs faster than the stream wants.
+     *  @param srcTransposed true for camera sensors (buffer is mounted 90°, the upright
+     *                  frame is the transpose — the pre-existing behavior); false for a
+     *                  source that already delivers upright frames (a decoded network
+     *                  camera stream), where the buffer is used as-is. */
     public GlRotationPipe(Surface encoderInput, int srcWidth, int srcHeight,
-                          int rotationDegrees, boolean mirror, int fpsLimit) {
+                          int rotationDegrees, boolean mirror, int fpsLimit,
+                          boolean srcTransposed) {
         outputs.add(new Out(encoderInput, fpsLimit));
         this.srcW          = srcWidth;
         this.srcH          = srcHeight;
         this.rotationDeg   = ((rotationDegrees % 360) + 360) % 360;
         this.mirror        = mirror;
+        this.srcTransposed = srcTransposed;
     }
 
     /**
@@ -209,12 +221,16 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
         Matrix.setIdentityM(model, 0);
         Matrix.rotateM(model, 0, -rotationDeg, 0f, 0f, 1f);
         if (mirror) Matrix.scaleM(model, 0, -1f, 1f, 1f);
-        // Upright source is the camera buffer transposed (sensor is mounted 90°): the
-        // long buffer edge becomes the tall edge. Half-extents for the unit quad.
-        int rotW = (rotationDeg == 90 || rotationDeg == 270) ? srcW : srcH;
-        int rotH = (rotationDeg == 90 || rotationDeg == 270) ? srcH : srcW;
-        float k = Math.max(o.w / (float) rotW, o.h / (float) rotH);
-        Matrix.scaleM(model, 0, k * srcH / 2f, k * srcW / 2f, 1f);
+        // Upright source: for a camera sensor (srcTransposed) the buffer is mounted 90°,
+        // so upright = the transpose (long buffer edge becomes the tall edge); a network
+        // camera's decoded frames are already upright and the buffer is used as-is.
+        // Half-extents for the unit quad.
+        float upW = srcTransposed ? srcH : srcW;
+        float upH = srcTransposed ? srcW : srcH;
+        float rotW = (rotationDeg == 90 || rotationDeg == 270) ? upH : upW;
+        float rotH = (rotationDeg == 90 || rotationDeg == 270) ? upW : upH;
+        float k = Math.max(o.w / rotW, o.h / rotH);
+        Matrix.scaleM(model, 0, k * upW / 2f, k * upH / 2f, 1f);
         Matrix.multiplyMM(mvp, 0, proj, 0, model, 0);
 
         quad.position(0);
