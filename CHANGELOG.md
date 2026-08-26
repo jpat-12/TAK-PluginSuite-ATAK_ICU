@@ -1,5 +1,31 @@
 # Changelog
 
+## 3.1.0 — 2026-08-26
+
+### ATAK-ICU 5.7 tree
+- **Network (IP) cameras as a capture source.** "Network camera (RTSP)" joins the
+  camera picker: the plugin pulls the camera's H.264 stream (RTSP, TCP-interleaved —
+  one TCP flow, the right shape for a radio mesh), decodes it, and feeds it through
+  the same GL/encoder pipeline as the built-in cameras — so per-destination profiles,
+  quality settings, HQ recording, FOV, and both LAN/Server destinations all apply to
+  a remote camera unchanged. Field-verified against a MOHOC behind a Silvus 4200
+  (camera on a different /24 across the mesh). Credentials ride the URL
+  (`rtsp://user:pass@…`); camera audio is ignored (phone mic remains the audio
+  source); H.264 only.
+- **Camera auto-discovery.** A "Find camera on network" button resolves the URL so
+  it doesn't have to be hand-typed: ONVIF WS-Discovery + SSDP multicast probes (cross
+  subnets on a bridged mesh), a port-554 sweep of the local /24, and a DESCRIBE sweep
+  of ~17 known vendor paths per discovered host. Typing just an IP and tapping Find
+  resolves the full URL too; auth-protected cameras are reported with a prompt.
+- **Persistent diagnostic log** at `<atak>/ICU Video/logs/icu-diag.log` (512 KB cap,
+  one rotation): broadcast start/stop, every RTSP exchange with response codes,
+  decoder configs, timeouts. Diagnosable field runs with no adb attached — which is
+  the norm when the phone's USB port is feeding an ethernet radio.
+- Fixed: restarting a network-camera broadcast failed with "SETUP failed: 501" — the
+  RTSP client reused the previous run's Session id on the new connection (and the
+  camera refused the stale session); per-session state now fully resets, and stop
+  sends a proper TEARDOWN.
+
 ## 3.0.0 — 2026-08-25
 
 ### ATAK-ICU 5.7 tree
