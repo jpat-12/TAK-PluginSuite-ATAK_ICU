@@ -184,7 +184,17 @@ android {
         main {
             // Keep archive/version naming consistent with the wider plugin community.
             setProperty("archivesBaseName", "ATAK-Plugin-" + rootProject.name + "-" + PLUGIN_VERSION + "-" + getVersionName() + "-" + ATAK_VERSION)
-            defaultConfig.versionCode = getVersionCode()
+            // versionCode derived from PLUGIN_VERSION (3.0.0 -> 30000), NOT takdev's
+            // getVersionCode(): that is git-derived, so every build from a source zip
+            // (tak.gov, and the archives this plugin actually ships from) falls back
+            // to versionCode 1 — and an MDM (Samsung Knox) then refuses the "upgrade"
+            // because 1 is not higher than the installed 1. Deriving from the version
+            // string is deterministic with or without git and always increases with a
+            // release. Room per part: major*10000 + minor*100 + patch (max .99).
+            def vparts = PLUGIN_VERSION.tokenize('.')
+            defaultConfig.versionCode = vparts[0].toInteger() * 10000 +
+                    (vparts.size() > 1 ? vparts[1].toInteger() : 0) * 100 +
+                    (vparts.size() > 2 ? vparts[2].toInteger() : 0)
             defaultConfig.versionName = PLUGIN_VERSION + " (" + getVersionName() + ") - [" + ATAK_VERSION + "]"
         }
 
