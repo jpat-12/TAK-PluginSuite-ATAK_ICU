@@ -794,6 +794,15 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             // authenticates to the server and uses reliable RTSP-interleaved delivery.
             return new StreamEndpoint(serverConfig.protocolName(), serverConfig.feedViewUrl());
         }
+        // A network camera on LAN is already an RTSP server on this same network —
+        // advertise IT, not the phone's re-served copy. Viewers then pull straight
+        // from the source (camera-quality, one mesh traversal) instead of the video
+        // crossing the radio mesh twice (camera→phone, phone→viewer) plus a
+        // re-encode, which showed up in the field as stream dropouts. The phone's
+        // own :8554 re-serve keeps running for the re-encoded copy (and recording/
+        // preview are unaffected — they ride the phone's pull either way).
+        if (EncoderConfig.CAMERA_ID_NETWORK.equals(config.cameraId))
+            return new StreamEndpoint("RTSP", config.networkCameraUrl);
         return new StreamEndpoint("RTSP",
                 com.atakmap.android.icu.util.NetworkUtils.rtspUrl(
                         com.atakmap.android.icu.serve.RtspServer.PORT,
