@@ -107,6 +107,30 @@ public class CapturePipeline {
     }
 
     /**
+     * The rotation to actually capture/encode with: the manual setting, or — when the
+     * setting is Auto (-1) — derived from the host activity's current display rotation,
+     * which is exactly what ATAK's force-portrait/landscape preference drives. Mapping
+     * per the device-tested table in the settings picker (natural-portrait phones):
+     * upright portrait = 0°, landscape (ROTATION_90) = 270°, and their reverses.
+     */
+    public static int resolveRotation(Context ctx, EncoderConfig config) {
+        if (config.rotationDegrees >= 0) return config.rotationDegrees;
+        try {
+            android.view.Display d = ((android.view.WindowManager)
+                    ctx.getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay();
+            switch (d.getRotation()) {
+                case android.view.Surface.ROTATION_90:  return 270;
+                case android.view.Surface.ROTATION_180: return 180;
+                case android.view.Surface.ROTATION_270: return 90;
+                default:                                return 0;
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "resolveRotation: " + t.getMessage());
+            return 270;   // the common case — ATAK is almost always run landscape
+        }
+    }
+
+    /**
      * Start capture + encode. Preview may be null (encoder-only).
      * The caller must already hold {@code android.permission.CAMERA}.
      */
@@ -128,8 +152,12 @@ public class CapturePipeline {
         final int recFps   = config.recordFps    > 0 ? config.recordFps    : config.fps;
         final boolean hqRecord = (recH != streamH || recFps != config.fps);
         final int camFps   = hqRecord ? Math.max(config.fps, recFps) : config.fps;
+        // Pin Auto rotation to a concrete value for this broadcast — everything below
+        // (encoder surface sizing, GL rotation, recording) needs the same answer.
+        final int rot      = resolveRotation(ctx, config);
 
         EncoderConfig streamCfg = cloneOf(config);
+        streamCfg.rotationDegrees = rot;
         if (config.captureH != streamH && config.captureH > 0) {
             streamCfg.captureH = streamH;
             streamCfg.captureW = even(config.captureW * streamH / config.captureH);
@@ -169,7 +197,7 @@ public class CapturePipeline {
         // surface. On any GL failure, fall back to feeding the encoder directly (no rotation).
         Surface cameraTarget = encoderSurface;
         glPipe = new GlRotationPipe(encoderSurface, config.captureW, config.captureH,
-                config.rotationDegrees, config.useFrontCamera,
+                rot, config.useFrontCamera,
                 camFps > config.fps ? config.fps : 0);
         Surface glInput = glPipe.start();
         if (glInput != null) {
@@ -184,6 +212,7 @@ public class CapturePipeline {
         // recording silently falls back to the stream-quality tap.
         if (hqRecord && glPipe != null) {
             recordCfg = cloneOf(config);
+            recordCfg.rotationDegrees = rot;
             recordCfg.captureH = recH;
             recordCfg.captureW = even(config.captureW * recH / config.captureH);
             recordCfg.fps = recFps;

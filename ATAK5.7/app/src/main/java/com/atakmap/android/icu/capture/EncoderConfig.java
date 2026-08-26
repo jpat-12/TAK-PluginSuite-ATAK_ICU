@@ -49,10 +49,12 @@ public class EncoderConfig {
 
     /**
      * Extra rotation applied to the preview (and, best-effort, the encoded stream).
-     * -1 = Auto (derive from sensor + display); otherwise 0/90/180/270.
-     * Manual override exists because some devices show inverted video in landscape.
+     * -1 = Auto — follow the host ATAK activity's current display orientation,
+     * including its force-portrait/landscape preference (resolved per broadcast by
+     * {@link CapturePipeline#resolveRotation}); otherwise 0/90/180/270. The manual
+     * values exist because some devices show inverted video in landscape.
      */
-    public int rotationDegrees = 270;
+    public int rotationDegrees = -1;
 
     /** Whether the persistent on-map broadcast-status badge is shown. Default on. */
     public boolean showStatusWidget = true;

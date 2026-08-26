@@ -179,6 +179,11 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         destToggleButton.setOnClickListener(v -> toggleDestination());
         settingsButton.setOnClickListener(v -> showSettingsPage());
 
+        // Drives "Auto — match ATAK" rotation: an orientation flip resizes the map view
+        // (fires with the pane closed too, unlike the pane's own layout callbacks).
+        lastAutoRotation = activeRotationDeg();
+        getMapView().addOnMapViewResizedListener(orientationWatcher);
+
         setRetain(true);
     }
 
@@ -257,9 +262,47 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         st.setDefaultBufferSize(config.captureW, config.captureH);
     }
 
-    /** Rotate the preview upright and letterbox it to the source aspect ratio. Manual
-     *  rotation only — no auto-detect (see the icu_rotation string-array and
-     *  rotationIndex/rotationValue below; there is no "Auto" entry).
+    /** The rotation in effect right now: the manual setting, or — on "Auto — match
+     *  ATAK" — derived from the host activity's current display rotation, which is
+     *  what ATAK's force-portrait/landscape preference drives. */
+    private int activeRotationDeg() {
+        return CapturePipeline.resolveRotation(atakContext(), config);
+    }
+
+    /** Rotation last applied (preview or broadcast) while in Auto — the change detector
+     *  for {@link #onOrientationMaybeChanged}. */
+    private int lastAutoRotation = Integer.MIN_VALUE;
+
+    /** Map-view resize → possible orientation change (kept as a field so disposeImpl
+     *  can unregister the same instance). */
+    private final com.atakmap.map.AtakMapView.OnMapViewResizedListener orientationWatcher =
+            view -> ui.post(this::onOrientationMaybeChanged);
+
+    /**
+     * Called when the pane's root layout changes size — which is how an ATAK
+     * orientation flip (rotating the device, or toggling ATAK's force-orientation
+     * setting) reaches us. In Auto mode, re-derive the rotation; if it changed while
+     * live, restart the broadcast so the encoded frame flips too (an H.264 stream's
+     * orientation is baked in — it can't change mid-stream). This also ends any
+     * recording in progress, same as a settings change would.
+     */
+    private void onOrientationMaybeChanged() {
+        if (config.rotationDegrees >= 0) return;   // manual setting — nothing to track
+        int now = activeRotationDeg();
+        if (now == lastAutoRotation) return;
+        lastAutoRotation = now;
+        applyPreviewRotation();
+        if (pipeline.isRunning()) {
+            Toast.makeText(pluginContext, "Orientation changed — restarting stream…",
+                    Toast.LENGTH_SHORT).show();
+            stopBroadcast();
+            startBroadcast();
+        }
+    }
+
+    /** Rotate the preview upright and letterbox it to the source aspect ratio (the
+     *  rotation itself is the manual setting or the Auto-resolved value — see
+     *  {@link #activeRotationDeg}).
      *
      *  <p>The TextureView fills the pane, so with the default (identity) transform the
      *  camera frame is stretched to the pane's shape and looks squashed/elongated. We
@@ -277,7 +320,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             return;
         }
 
-        int deg = ((config.rotationDegrees % 360) + 360) % 360;
+        int deg = ((activeRotationDeg() % 360) + 360) % 360;
         // Match the encoder/stream: the camera's SurfaceTexture bakes in the 90° sensor
         // orientation, so the upright frame is PORTRAIT for 0°/180° and LANDSCAPE for
         // 90°/270°. Use the same swap the encoder uses so the preview aspect matches the
@@ -711,7 +754,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             Toast.makeText(atakContext(), "Start broadcasting first.", Toast.LENGTH_SHORT).show();
             return;
         }
-        pipeline.captureStill(config.rotationDegrees, new CameraSource.StillCallback() {
+        pipeline.captureStill(activeRotationDeg(), new CameraSource.StillCallback() {
             @Override public void onStill(byte[] jpeg) {
                 ui.post(() -> saveSnapshotJpeg(jpeg));
             }
@@ -1300,7 +1343,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     return;
                 }
                 try {
-                    new QrScanDialog(ctx, config.rotationDegrees, text -> {
+                    new QrScanDialog(ctx, activeRotationDeg(), text -> {
                         try {
                             StreamUrlParser.Parsed p = StreamUrlParser.parse(text);
                             // Only the server identity always comes from the QR. Every
@@ -1598,10 +1641,22 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     // device-tested value that Landscape needs a 270° correction, with the other three
     // derived from the fixed 90°-apart / 180°-reverse relationship between them.
     private static int rotationIndex(int deg) {
-        switch (deg) { case 270: return 1; case 180: return 2; case 90: return 3; default: return 0; }
+        switch (deg) {
+            case 0:   return 1;
+            case 270: return 2;
+            case 180: return 3;
+            case 90:  return 4;
+            default:  return 0;   // -1 (or anything unexpected) = Auto
+        }
     }
     private static int rotationValue(int index) {
-        switch (index) { case 1: return 270; case 2: return 180; case 3: return 90; default: return 0; }
+        switch (index) {
+            case 1: return 0;
+            case 2: return 270;
+            case 3: return 180;
+            case 4: return 90;
+            default: return -1;   // Auto — match ATAK's orientation
+        }
     }
     private static String str(EditText e, String def) {
         String s = e.getText().toString().trim();
@@ -1707,6 +1762,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
     @Override
     protected void disposeImpl() {
+        getMapView().removeOnMapViewResizedListener(orientationWatcher);
         stopRecording(false);
         stopNetworkMonitor();
         pipeline.stop();

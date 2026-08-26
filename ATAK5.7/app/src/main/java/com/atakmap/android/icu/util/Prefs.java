@@ -87,7 +87,9 @@ public final class Prefs {
         enc.bitrateKbps     = sp.getInt("bitrate" + d, sp.getInt("bitrate", 2500));
         enc.useFrontCamera  = sp.getBoolean("front_camera" + d, sp.getBoolean("front_camera", false));
         enc.cameraId        = sp.getString("camera_id" + d, sp.getString("camera_id", ""));
-        enc.rotationDegrees = sp.getInt("rotation" + d, sp.getInt("rotation", 270));
+        // Fresh installs default to Auto (-1, follow ATAK's orientation); an existing
+        // save keeps whatever manual rotation was already chosen.
+        enc.rotationDegrees = sp.getInt("rotation" + d, sp.getInt("rotation", -1));
         enc.gopSeconds      = sp.getInt("keyframe_sec" + d, sp.getInt("keyframe_sec", 2));
         enc.streamAudio     = sp.getBoolean("stream_audio" + d, sp.getBoolean("stream_audio", true));
     }
