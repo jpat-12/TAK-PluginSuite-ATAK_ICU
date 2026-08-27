@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.1.1 — 2026-08-27
+
+### ATAK-ICU 5.7 tree
+- Fixed: with a network camera on the LAN destination, the self-marker video
+  detail advertised the phone's re-served copy, so the video crossed the radio
+  mesh twice (camera→phone, phone→viewer) plus a re-encode — receiving EUDs saw
+  the stream cut in and out. The camera's own RTSP URL is advertised instead;
+  viewers pull one mesh hop straight from the source. (Each direct viewer opens
+  its own session on the camera — large viewer counts belong on the re-served
+  copy or the Server destination.) Server mode is unchanged.
+
 ## 3.1.0 — 2026-08-26
 
 ### ATAK-ICU 5.7 tree
