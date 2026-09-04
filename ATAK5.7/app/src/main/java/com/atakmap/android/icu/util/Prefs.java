@@ -15,6 +15,14 @@ import com.atakmap.android.maps.MapView;
  * ATAK's persistent data directory, so they do not survive an ATAK restart — the
  * values only live in the in-memory cache for the current session. Using the host
  * context writes to ATAK's own {@code shared_prefs} dir, which persists.</p>
+ *
+ * <p>The capture/encode settings (resolution, fps, bitrate, camera, rotation,
+ * keyframe interval, audio) are kept as <b>one profile per destination</b> — a
+ * "{@code .LAN}"/"{@code .SERVER}"-suffixed copy of each key — because a LAN
+ * broadcast and a media-server push typically want different tunings. A profile
+ * key that has never been written falls back to the legacy unsuffixed key, so an
+ * upgrade seeds both profiles with whatever was saved before the split. Everything
+ * else (server identity, FOV, display/power) stays destination-independent.</p>
  */
 public final class Prefs {
 
@@ -51,28 +59,49 @@ public final class Prefs {
                 sp.getString("push_protocol", "RTSP")); }
         catch (Exception ignored) { srv.pushProtocol = MediaServerConfig.PushProtocol.RTSP; }
 
-        String res = sp.getString("resolution", "P720");
-        try { enc.resolution = EncoderConfig.Resolution.valueOf(res); }
-        catch (Exception ignored) { enc.resolution = EncoderConfig.Resolution.P720; }
-        enc.fps             = sp.getInt("fps", 30);
-        enc.bitrateKbps     = sp.getInt("bitrate", 2500);
-        enc.useFrontCamera  = sp.getBoolean("front_camera", false);
-        enc.cameraId        = sp.getString("camera_id", "");
-        enc.rotationDegrees = sp.getInt("rotation", 270);
         enc.showStatusWidget = sp.getBoolean("show_status_widget", true);
-        enc.streamAudio      = sp.getBoolean("stream_audio", true);
         enc.streamWithScreenOff = sp.getBoolean("stream_screen_off", false);
-        enc.gopSeconds     = sp.getInt("keyframe_sec", 2);
         enc.fovRefreshSec  = sp.getInt("fov_refresh_sec", 3);
         enc.fovRangeM      = sp.getInt("fov_range_m", 100);
+        enc.recordHeight   = sp.getInt("record_height", 0);
+        enc.recordFps      = sp.getInt("record_fps", 0);
+        enc.networkCameraUrl = sp.getString("net_camera_url", "rtsp://172.20.1.1:554/stream1");
+
+        loadProfileInto(sp, srv.destination, enc);
+    }
+
+    /** The capture/encode profile saved for {@code dest} (globals left at defaults). */
+    public static EncoderConfig loadProfile(Context ctx, MediaServerConfig.Destination dest) {
+        EncoderConfig enc = new EncoderConfig();
+        loadProfileInto(ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE), dest, enc);
+        return enc;
+    }
+
+    private static void loadProfileInto(SharedPreferences sp,
+                                        MediaServerConfig.Destination dest,
+                                        EncoderConfig enc) {
+        String d = "." + dest.name();
+        String res = sp.getString("resolution" + d, sp.getString("resolution", "P720"));
+        try { enc.resolution = EncoderConfig.Resolution.valueOf(res); }
+        catch (Exception ignored) { enc.resolution = EncoderConfig.Resolution.P720; }
+        enc.fps             = sp.getInt("fps" + d, sp.getInt("fps", 30));
+        enc.bitrateKbps     = sp.getInt("bitrate" + d, sp.getInt("bitrate", 2500));
+        enc.useFrontCamera  = sp.getBoolean("front_camera" + d, sp.getBoolean("front_camera", false));
+        enc.cameraId        = sp.getString("camera_id" + d, sp.getString("camera_id", ""));
+        // Fresh installs default to Auto (-1, follow ATAK's orientation); an existing
+        // save keeps whatever manual rotation was already chosen.
+        enc.rotationDegrees = sp.getInt("rotation" + d, sp.getInt("rotation", -1));
+        enc.gopSeconds      = sp.getInt("keyframe_sec" + d, sp.getInt("keyframe_sec", 2));
+        enc.streamAudio     = sp.getBoolean("stream_audio" + d, sp.getBoolean("stream_audio", true));
     }
 
     public static void save(Context ctx, MediaServerConfig srv, EncoderConfig enc) {
         // commit() (not apply()) so the write is on disk before this call returns —
         // apply()'s write-behind can otherwise be lost if ATAK is force-stopped/killed
         // shortly after Save, which is exactly what "restart ATAK" testing does.
-        ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
-                .putString("destination", srv.destination.name())
+        SharedPreferences.Editor e =
+                ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit();
+        e.putString("destination", srv.destination.name())
                 .putString("alias", nz(srv.alias, "VIDEO_1"))
                 .putString("server_host", srv.host == null ? "" : srv.host.trim())
                 .putString("stream_path", nz(srv.streamPath, "icu"))
@@ -82,19 +111,39 @@ public final class Prefs {
                 .putString("srt_passphrase", srv.srtPassphrase == null ? "" : srv.srtPassphrase)
                 .putString("feed_uuid", srv.feedUuid == null ? "" : srv.feedUuid)
                 .putString("push_protocol", srv.pushProtocol.name())
-                .putString("resolution", enc.resolution.name())
-                .putInt("fps", enc.fps)
-                .putInt("bitrate", enc.bitrateKbps)
-                .putBoolean("front_camera", enc.useFrontCamera)
-                .putString("camera_id", enc.cameraId == null ? "" : enc.cameraId)
-                .putInt("rotation", enc.rotationDegrees)
                 .putBoolean("show_status_widget", enc.showStatusWidget)
-                .putBoolean("stream_audio", enc.streamAudio)
                 .putBoolean("stream_screen_off", enc.streamWithScreenOff)
-                .putInt("keyframe_sec", enc.gopSeconds)
                 .putInt("fov_refresh_sec", enc.fovRefreshSec)
                 .putInt("fov_range_m", enc.fovRangeM)
-                .commit();
+                .putInt("record_height", enc.recordHeight)
+                .putInt("record_fps", enc.recordFps)
+                .putString("net_camera_url",
+                        enc.networkCameraUrl == null ? "" : enc.networkCameraUrl.trim());
+        putProfile(e, srv.destination, enc);
+        e.commit();
+    }
+
+    /** Persist the capture/encode profile for {@code dest} (globals untouched). */
+    public static void saveProfile(Context ctx, MediaServerConfig.Destination dest,
+                                   EncoderConfig enc) {
+        SharedPreferences.Editor e =
+                ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit();
+        putProfile(e, dest, enc);
+        e.commit();
+    }
+
+    private static void putProfile(SharedPreferences.Editor e,
+                                   MediaServerConfig.Destination dest,
+                                   EncoderConfig enc) {
+        String d = "." + dest.name();
+        e.putString("resolution" + d, enc.resolution.name())
+                .putInt("fps" + d, enc.fps)
+                .putInt("bitrate" + d, enc.bitrateKbps)
+                .putBoolean("front_camera" + d, enc.useFrontCamera)
+                .putString("camera_id" + d, enc.cameraId == null ? "" : enc.cameraId)
+                .putInt("rotation" + d, enc.rotationDegrees)
+                .putInt("keyframe_sec" + d, enc.gopSeconds)
+                .putBoolean("stream_audio" + d, enc.streamAudio);
     }
 
     private static String nz(String v, String def) {

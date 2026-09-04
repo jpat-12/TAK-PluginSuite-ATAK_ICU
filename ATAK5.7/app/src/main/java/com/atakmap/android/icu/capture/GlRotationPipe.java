@@ -30,10 +30,32 @@ import java.nio.FloatBuffer;
  *
  * <p>The preview path is untouched — the camera still targets the preview Surface directly
  * and the pane's TextureView matrix rotates that copy.</p>
+ *
+ * <p>The pipe can drive <b>additional output surfaces</b> from the same camera frame
+ * (see {@link #addOutput}) — used by the high-quality record path, which runs a second
+ * encoder at a different resolution. Each output has its own viewport (the frame is
+ * scaled to fit it) and an optional fps cap: when recording wants a higher frame rate
+ * than the stream, the camera runs at the higher rate and the stream's output drops
+ * frames down to its configured rate here.</p>
  */
 public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
 
     private static final String TAG = "ICU.GlRotationPipe";
+
+    /** One render target: an encoder input surface with its own viewport and fps cap. */
+    private static final class Out {
+        final Surface surface;
+        final long minGapNs;      // minimum ns between presented frames; 0 = every frame
+        EGLSurface egl = EGL14.EGL_NO_SURFACE;
+        int w, h;
+        long lastNs;
+        Out(Surface surface, int fpsLimit) {
+            this.surface = surface;
+            // 0.95 factor tolerates camera timestamp jitter — without it a 30fps source
+            // capped at 30 would drop frames whenever an interval lands a hair short.
+            this.minGapNs = fpsLimit > 0 ? (long) (0.95 * 1_000_000_000L / fpsLimit) : 0;
+        }
+    }
 
     private static final String VERTEX_SHADER =
             "uniform mat4 uRot;\n" +
@@ -62,21 +84,25 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
              1f,  1f,  1f, 1f,
     };
 
-    private final Surface  outputSurface;   // encoder input
     private final int      srcW, srcH;      // camera capture buffer size
     private final int      rotationDeg;
     private final boolean  mirror;
+    private final boolean  srcTransposed;   // sensor-mounted-90° source (see constructor)
 
     private EGLDisplay eglDisplay = EGL14.EGL_NO_DISPLAY;
     private EGLContext eglContext = EGL14.EGL_NO_CONTEXT;
-    private EGLSurface eglSurface = EGL14.EGL_NO_SURFACE;
+    private EGLConfig  eglConfig;
+
+    // outputs[0] is the primary (stream encoder) surface, created with the pipe; extras
+    // come and go via addOutput/removeOutput. CopyOnWrite: drawFrame iterates on the GL
+    // thread while add/remove mutate from the pipeline thread.
+    private final java.util.List<Out> outputs = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     private int program, texId;
     private int aPosition, aTexCoord, uRot, uStMatrix;
     private SurfaceTexture surfaceTexture;
     private Surface inputSurface;            // camera draws here
     private FloatBuffer quad;
-    private int vpW, vpH;                     // encoder surface (viewport) size
     private final float[] stMatrix = new float[16];
     private final float[] mvp   = new float[16];
     private final float[] proj  = new float[16];
@@ -89,11 +115,29 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
 
     public GlRotationPipe(Surface encoderInput, int srcWidth, int srcHeight,
                           int rotationDegrees, boolean mirror) {
-        this.outputSurface = encoderInput;
+        this(encoderInput, srcWidth, srcHeight, rotationDegrees, mirror, 0, true);
+    }
+
+    public GlRotationPipe(Surface encoderInput, int srcWidth, int srcHeight,
+                          int rotationDegrees, boolean mirror, int fpsLimit) {
+        this(encoderInput, srcWidth, srcHeight, rotationDegrees, mirror, fpsLimit, true);
+    }
+
+    /** @param fpsLimit cap on the PRIMARY output's frame rate (0 = present every camera
+     *                  frame) — used when the camera runs faster than the stream wants.
+     *  @param srcTransposed true for camera sensors (buffer is mounted 90°, the upright
+     *                  frame is the transpose — the pre-existing behavior); false for a
+     *                  source that already delivers upright frames (a decoded network
+     *                  camera stream), where the buffer is used as-is. */
+    public GlRotationPipe(Surface encoderInput, int srcWidth, int srcHeight,
+                          int rotationDegrees, boolean mirror, int fpsLimit,
+                          boolean srcTransposed) {
+        outputs.add(new Out(encoderInput, fpsLimit));
         this.srcW          = srcWidth;
         this.srcH          = srcHeight;
         this.rotationDeg   = ((rotationDegrees % 360) + 360) % 360;
         this.mirror        = mirror;
+        this.srcTransposed = srcTransposed;
     }
 
     /**
@@ -137,56 +181,139 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
     private void drawFrame() {
         if (released || surfaceTexture == null) return;
         try {
+            // updateTexImage needs a current context; the primary surface is always there.
+            Out primary = outputs.get(0);
+            EGL14.eglMakeCurrent(eglDisplay, primary.egl, primary.egl, eglContext);
             surfaceTexture.updateTexImage();
             surfaceTexture.getTransformMatrix(stMatrix);
             if (!loggedSt) {
                 loggedSt = true;
                 Log.d(TAG, "stMatrix=" + java.util.Arrays.toString(stMatrix));
             }
+            long ts = surfaceTexture.getTimestamp();
 
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-            GLES20.glUseProgram(program);
-
-            // Rotate in PIXEL space via an orthographic projection so a 90°/270° rotation
-            // never distorts (rotating the quad directly in square NDC and mapping to a
-            // non-square viewport stretches it). The unit quad is scaled to the source's
-            // upright aspect, rotated, then projected into the viewport's pixel box; because
-            // the encoder surface is sized to the rotated aspect, it fills exactly.
-            // Negate the angle to match the preview's clockwise Matrix.postRotate.
-            Matrix.orthoM(proj, 0, -vpW / 2f, vpW / 2f, -vpH / 2f, vpH / 2f, -1f, 1f);
-            Matrix.setIdentityM(model, 0);
-            Matrix.rotateM(model, 0, -rotationDeg, 0f, 0f, 1f);
-            if (mirror) Matrix.scaleM(model, 0, -1f, 1f, 1f);
-            // Upright source is the camera buffer transposed (sensor is mounted 90°): the
-            // long buffer edge becomes the tall edge. Half-extents for the unit quad.
-            Matrix.scaleM(model, 0, srcH / 2f, srcW / 2f, 1f);
-            Matrix.multiplyMM(mvp, 0, proj, 0, model, 0);
-
-            quad.position(0);
-            GLES20.glVertexAttribPointer(aPosition, 2, GLES20.GL_FLOAT, false, 16, quad);
-            GLES20.glEnableVertexAttribArray(aPosition);
-            quad.position(2);
-            GLES20.glVertexAttribPointer(aTexCoord, 2, GLES20.GL_FLOAT, false, 16, quad);
-            GLES20.glEnableVertexAttribArray(aTexCoord);
-
-            GLES20.glUniformMatrix4fv(uRot, 1, false, mvp, 0);
-            GLES20.glUniformMatrix4fv(uStMatrix, 1, false, stMatrix, 0);
-
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
-            GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texId);
-
-            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
-
-            // Present with the camera frame's timestamp so encoder PTS stays monotonic.
-            EGLExt_setPresentationTime(surfaceTexture.getTimestamp());
-            EGL14.eglSwapBuffers(eglDisplay, eglSurface);
+            for (Out o : outputs) {
+                // Per-output frame-rate cap (primary only in practice): skip the frame if
+                // it lands sooner than the output's interval since the last one presented.
+                if (o.minGapNs > 0 && o.lastNs > 0 && ts - o.lastNs < o.minGapNs) continue;
+                o.lastNs = ts;
+                drawTo(o, ts);
+            }
         } catch (Exception e) {
             Log.w(TAG, "drawFrame: " + e.getMessage());
         }
     }
 
-    private void EGLExt_setPresentationTime(long nsecs) {
-        android.opengl.EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, nsecs);
+    private void drawTo(Out o, long ts) {
+        EGL14.eglMakeCurrent(eglDisplay, o.egl, o.egl, eglContext);
+        GLES20.glViewport(0, 0, o.w, o.h);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        GLES20.glUseProgram(program);
+
+        // Rotate in PIXEL space via an orthographic projection so a 90°/270° rotation
+        // never distorts (rotating the quad directly in square NDC and mapping to a
+        // non-square viewport stretches it). The unit quad is scaled to the source's
+        // upright aspect, rotated, then projected into the viewport's pixel box. A
+        // secondary output can be a different size than the source (the HQ-record
+        // downscale/upscale case), so the quad is uniformly scaled to cover its box —
+        // same aspect by construction, so no distortion, at most a rounding-pixel crop.
+        Matrix.orthoM(proj, 0, -o.w / 2f, o.w / 2f, -o.h / 2f, o.h / 2f, -1f, 1f);
+        Matrix.setIdentityM(model, 0);
+        Matrix.rotateM(model, 0, -rotationDeg, 0f, 0f, 1f);
+        if (mirror) Matrix.scaleM(model, 0, -1f, 1f, 1f);
+        // Upright source: for a camera sensor (srcTransposed) the buffer is mounted 90°,
+        // so upright = the transpose (long buffer edge becomes the tall edge); a network
+        // camera's decoded frames are already upright and the buffer is used as-is.
+        // Half-extents for the unit quad.
+        float upW = srcTransposed ? srcH : srcW;
+        float upH = srcTransposed ? srcW : srcH;
+        float rotW = (rotationDeg == 90 || rotationDeg == 270) ? upH : upW;
+        float rotH = (rotationDeg == 90 || rotationDeg == 270) ? upW : upH;
+        float k = Math.max(o.w / rotW, o.h / rotH);
+        Matrix.scaleM(model, 0, k * upW / 2f, k * upH / 2f, 1f);
+        Matrix.multiplyMM(mvp, 0, proj, 0, model, 0);
+
+        quad.position(0);
+        GLES20.glVertexAttribPointer(aPosition, 2, GLES20.GL_FLOAT, false, 16, quad);
+        GLES20.glEnableVertexAttribArray(aPosition);
+        quad.position(2);
+        GLES20.glVertexAttribPointer(aTexCoord, 2, GLES20.GL_FLOAT, false, 16, quad);
+        GLES20.glEnableVertexAttribArray(aTexCoord);
+
+        GLES20.glUniformMatrix4fv(uRot, 1, false, mvp, 0);
+        GLES20.glUniformMatrix4fv(uStMatrix, 1, false, stMatrix, 0);
+
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texId);
+
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+
+        // Present with the camera frame's timestamp so encoder PTS stays monotonic.
+        android.opengl.EGLExt.eglPresentationTimeANDROID(eglDisplay, o.egl, ts);
+        EGL14.eglSwapBuffers(eglDisplay, o.egl);
+    }
+
+    /**
+     * Attach another output surface (a second encoder's input) mid-stream. Blocks until
+     * the GL thread has created the EGL surface. Returns false on failure — the pipe
+     * keeps running on its existing outputs either way.
+     */
+    public boolean addOutput(Surface surface) {
+        if (released || handler == null) return false;
+        final Out o = new Out(surface, 0);
+        final boolean[] ok = new boolean[1];
+        final boolean[] done = new boolean[1];
+        final Object lock = new Object();
+        handler.post(() -> {
+            try {
+                o.egl = EGL14.eglCreateWindowSurface(eglDisplay, eglConfig, o.surface,
+                        new int[]{ EGL14.EGL_NONE }, 0);
+                int[] w = new int[1], h = new int[1];
+                EGL14.eglQuerySurface(eglDisplay, o.egl, EGL14.EGL_WIDTH, w, 0);
+                EGL14.eglQuerySurface(eglDisplay, o.egl, EGL14.EGL_HEIGHT, h, 0);
+                o.w = w[0]; o.h = h[0];
+                outputs.add(o);
+                ok[0] = true;
+                Log.d(TAG, "added output " + o.w + "x" + o.h
+                        + " (" + outputs.size() + " total)");
+            } catch (Exception e) {
+                Log.w(TAG, "addOutput failed: " + e.getMessage());
+            } finally {
+                synchronized (lock) { done[0] = true; lock.notifyAll(); }
+            }
+        });
+        synchronized (lock) {
+            while (!done[0]) { try { lock.wait(2000); } catch (InterruptedException ignored) { break; } }
+        }
+        return ok[0];
+    }
+
+    /** Detach an output added by {@link #addOutput}. Blocks so the caller can safely stop
+     *  the encoder that owns {@code surface} afterwards. No-op for the primary output. */
+    public void removeOutput(Surface surface) {
+        if (handler == null) return;
+        final boolean[] done = new boolean[1];
+        final Object lock = new Object();
+        handler.post(() -> {
+            try {
+                for (Out o : outputs) {
+                    if (o.surface == surface && o != outputs.get(0)) {
+                        outputs.remove(o);
+                        Out primary = outputs.get(0);
+                        EGL14.eglMakeCurrent(eglDisplay, primary.egl, primary.egl, eglContext);
+                        EGL14.eglDestroySurface(eglDisplay, o.egl);
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "removeOutput: " + e.getMessage());
+            } finally {
+                synchronized (lock) { done[0] = true; lock.notifyAll(); }
+            }
+        });
+        synchronized (lock) {
+            while (!done[0]) { try { lock.wait(1000); } catch (InterruptedException ignored) { break; } }
+        }
     }
 
     public void release() {
@@ -229,21 +356,23 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
         EGLConfig[] configs = new EGLConfig[1];
         int[] numConfigs = new int[1];
         EGL14.eglChooseConfig(eglDisplay, attribs, 0, configs, 0, 1, numConfigs, 0);
+        eglConfig = configs[0];
 
         int[] ctxAttribs = { EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE };
-        eglContext = EGL14.eglCreateContext(eglDisplay, configs[0], EGL14.EGL_NO_CONTEXT, ctxAttribs, 0);
+        eglContext = EGL14.eglCreateContext(eglDisplay, eglConfig, EGL14.EGL_NO_CONTEXT, ctxAttribs, 0);
 
+        // Primary output = the stream encoder's input surface. Its viewport is set per
+        // frame in drawTo (each output has its own size).
+        Out primary = outputs.get(0);
         int[] surfAttribs = { EGL14.EGL_NONE };
-        eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, configs[0], outputSurface, surfAttribs, 0);
-        EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext);
+        primary.egl = EGL14.eglCreateWindowSurface(eglDisplay, eglConfig, primary.surface, surfAttribs, 0);
+        EGL14.eglMakeCurrent(eglDisplay, primary.egl, primary.egl, eglContext);
 
-        // Viewport = the encoder input surface's actual size (already swapped for 90/270).
         int[] w = new int[1], h = new int[1];
-        EGL14.eglQuerySurface(eglDisplay, eglSurface, EGL14.EGL_WIDTH, w, 0);
-        EGL14.eglQuerySurface(eglDisplay, eglSurface, EGL14.EGL_HEIGHT, h, 0);
-        vpW = w[0]; vpH = h[0];
-        GLES20.glViewport(0, 0, vpW, vpH);
-        Log.d(TAG, "GL viewport " + vpW + "x" + vpH + " (src " + srcW + "x" + srcH
+        EGL14.eglQuerySurface(eglDisplay, primary.egl, EGL14.EGL_WIDTH, w, 0);
+        EGL14.eglQuerySurface(eglDisplay, primary.egl, EGL14.EGL_HEIGHT, h, 0);
+        primary.w = w[0]; primary.h = h[0];
+        Log.d(TAG, "GL primary output " + primary.w + "x" + primary.h + " (src " + srcW + "x" + srcH
                 + ", rot=" + rotationDeg + ")");
     }
 
@@ -271,14 +400,16 @@ public class GlRotationPipe implements SurfaceTexture.OnFrameAvailableListener {
     private void releaseEgl() {
         if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
             EGL14.eglMakeCurrent(eglDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT);
-            if (eglSurface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(eglDisplay, eglSurface);
+            for (Out o : outputs) {
+                if (o.egl != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(eglDisplay, o.egl);
+                o.egl = EGL14.EGL_NO_SURFACE;
+            }
             if (eglContext != EGL14.EGL_NO_CONTEXT) EGL14.eglDestroyContext(eglDisplay, eglContext);
             EGL14.eglReleaseThread();
             EGL14.eglTerminate(eglDisplay);
         }
         eglDisplay = EGL14.EGL_NO_DISPLAY;
         eglContext = EGL14.EGL_NO_CONTEXT;
-        eglSurface = EGL14.EGL_NO_SURFACE;
     }
 
     private static int buildProgram(String vs, String fs) {

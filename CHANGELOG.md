@@ -1,6 +1,68 @@
 # Changelog
 
-## Unreleased
+## 3.1.1 — 2026-08-27
+
+### ATAK-ICU 5.7 tree
+- Fixed: with a network camera on the LAN destination, the self-marker video
+  detail advertised the phone's re-served copy, so the video crossed the radio
+  mesh twice (camera→phone, phone→viewer) plus a re-encode — receiving EUDs saw
+  the stream cut in and out. The camera's own RTSP URL is advertised instead;
+  viewers pull one mesh hop straight from the source. (Each direct viewer opens
+  its own session on the camera — large viewer counts belong on the re-served
+  copy or the Server destination.) Server mode is unchanged.
+
+## 3.1.0 — 2026-08-26
+
+### ATAK-ICU 5.7 tree
+- **Network (IP) cameras as a capture source.** "Network camera (RTSP)" joins the
+  camera picker: the plugin pulls the camera's H.264 stream (RTSP, TCP-interleaved —
+  one TCP flow, the right shape for a radio mesh), decodes it, and feeds it through
+  the same GL/encoder pipeline as the built-in cameras — so per-destination profiles,
+  quality settings, HQ recording, FOV, and both LAN/Server destinations all apply to
+  a remote camera unchanged. Field-verified against a MOHOC behind a Silvus 4200
+  (camera on a different /24 across the mesh). Credentials ride the URL
+  (`rtsp://user:pass@…`); camera audio is ignored (phone mic remains the audio
+  source); H.264 only.
+- **Camera auto-discovery.** A "Find camera on network" button resolves the URL so
+  it doesn't have to be hand-typed: ONVIF WS-Discovery + SSDP multicast probes (cross
+  subnets on a bridged mesh), a port-554 sweep of the local /24, and a DESCRIBE sweep
+  of ~17 known vendor paths per discovered host. Typing just an IP and tapping Find
+  resolves the full URL too; auth-protected cameras are reported with a prompt.
+- **Persistent diagnostic log** at `<atak>/ICU Video/logs/icu-diag.log` (512 KB cap,
+  one rotation): broadcast start/stop, every RTSP exchange with response codes,
+  decoder configs, timeouts. Diagnosable field runs with no adb attached — which is
+  the norm when the phone's USB port is feeding an ethernet radio.
+- Fixed: restarting a network-camera broadcast failed with "SETUP failed: 501" — the
+  RTSP client reused the previous run's Session id on the new connection (and the
+  camera refused the stale session); per-session state now fully resets, and stop
+  sends a proper TEARDOWN.
+
+## 3.0.0 — 2026-08-25
+
+### ATAK-ICU 5.7 tree
+- **Per-destination camera settings.** LAN and Media Server each keep their own
+  persistent capture/encode profile (resolution, fps, bitrate, camera, rotation,
+  keyframe interval, mic audio); the settings dialog swaps the VIDEO fields as
+  the Destination picker flips, and an upgrade seeds both profiles from the old
+  flat settings.
+- **Quick-bar rework.** Broadcast / Record / LAN⇄Server toggle / Blackout. The
+  toggle flips destination in one tap (restarting a live stream onto the new
+  destination); snapshot moved to the self-marker radial only. Buttons resized
+  so all four fit a 1080p phone.
+- **Record at a different quality than the stream.** New "Record resolution" /
+  "Record frame rate" settings spin up a second on-demand H.264 encoder — e.g.
+  stream 720p15 over a constrained link while the local file gets 1080p30.
+  Device-verified: 960x720@15 stream alongside a 1440x1080@30 / 4.4 Mbps file.
+- **Recordings moved to `<internal storage>/atak/ICU Video`** so they're
+  visible to normal file browsers.
+- **"Auto — match ATAK" orientation** (new default): capture rotation follows
+  the host's display orientation, including ATAK's force-portrait/landscape
+  setting; a mid-broadcast flip restarts the stream in the new orientation.
+- **Map status badge is actually tappable**: hit box widened past the icon
+  bitmap and across the dot/LIVE label; overlay widgets no longer swallow taps.
+- **tools/icu-qr-generator.html** — offline, self-contained page that generates
+  the server-provisioning QR (server/port/credentials only; every device keeps
+  its callsign-derived alias and stream path).
 
 ### ATAK-ICU features (both 5.6 and 5.7 trees)
 - **The broadcast survives a network change.** Switching Wi-Fi to LTE, or hopping
