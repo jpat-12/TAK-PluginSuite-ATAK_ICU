@@ -57,6 +57,7 @@ public final class Prefs {
         enc.fps             = sp.getInt("fps", 30);
         enc.bitrateKbps     = sp.getInt("bitrate", 2500);
         enc.useFrontCamera  = sp.getBoolean("front_camera", false);
+        enc.cameraId        = sp.getString("camera_id", "");
         enc.rotationDegrees = sp.getInt("rotation", 270);
         enc.showStatusWidget = sp.getBoolean("show_status_widget", true);
         enc.streamAudio      = sp.getBoolean("stream_audio", true);
@@ -85,6 +86,7 @@ public final class Prefs {
                 .putInt("fps", enc.fps)
                 .putInt("bitrate", enc.bitrateKbps)
                 .putBoolean("front_camera", enc.useFrontCamera)
+                .putString("camera_id", enc.cameraId == null ? "" : enc.cameraId)
                 .putInt("rotation", enc.rotationDegrees)
                 .putBoolean("show_status_widget", enc.showStatusWidget)
                 .putBoolean("stream_audio", enc.streamAudio)

@@ -29,6 +29,7 @@ import com.atakmap.android.dropdown.DropDownReceiver;
 import com.atakmap.android.icu.capture.CameraSource;
 import com.atakmap.android.icu.capture.CapturePipeline;
 import com.atakmap.android.icu.capture.EncoderConfig;
+import com.atakmap.android.icu.capture.Mp4Recorder;
 import com.atakmap.android.icu.plugin.R;
 import com.atakmap.android.icu.serve.MediaServerConfig;
 import com.atakmap.android.icu.serve.OnDeviceRtspTransport;
@@ -40,6 +41,7 @@ import com.atakmap.android.icu.serve.TransportManager;
 import com.atakmap.android.icu.share.SelfMarkerFov;
 import com.atakmap.android.icu.ui.StreamStatusWidget;
 import com.atakmap.android.icu.ui.qr.QrScanDialog;
+import com.atakmap.android.icu.util.NetworkMonitor;
 import com.atakmap.android.icu.util.Prefs;
 import com.atakmap.android.icu.util.StreamUrlParser;
 import com.atakmap.android.maps.MapView;
@@ -48,7 +50,7 @@ import com.atakmap.coremap.log.Log;
 import java.util.List;
 
 /**
- * ICU VideoStreamer main pane.
+ * ATAK-ICU main pane.
  *
  * <p>Broadcasts the phone camera into ATAK. Destination (this device vs. a media
  * server), server address/credentials, and encoding are configured via the Settings
@@ -77,12 +79,20 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     private final CapturePipeline   pipeline     = new CapturePipeline();
+    // Local MP4 capture. Muxes the SAME encoded stream the transports get — see Mp4Recorder
+    // for why it doesn't run a second camera/encoder, and what that implies for the operator.
+    private final Mp4Recorder       recorder     = new Mp4Recorder();
     private final EncoderConfig     config       = new EncoderConfig();
     private final MediaServerConfig serverConfig = new MediaServerConfig();
     // Injects the FOV + video into the operator's OWN outbound self CoT via
     // CotMapComponent.addAdditionalDetail — the FOV rides on the skittle's own CoT
     // (ATAK renders it), no separate marker. See SelfMarkerFov.
     private final SelfMarkerFov sensor = new SelfMarkerFov();
+
+    // MISB ST 0601 KLV telemetry (position/orientation), muxed into the on-device RTSP
+    // transport's second RTP track. See serve/KlvEncoder + serve/RtspServer's KLV track.
+    private final com.atakmap.android.icu.share.KlvTelemetryEmitter klv =
+            new com.atakmap.android.icu.share.KlvTelemetryEmitter();
 
     // Registers the stream as a feed on the TAK Server's Video Feed Manager (server DB
     // via /Marti/vcm) when pushing to a server. See VideoConnectionPublisher.
@@ -92,6 +102,10 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
     private TransportManager transports;
 
+    // Watches for Wi-Fi/LTE handovers while live. A broadcast's outbound socket does not
+    // survive one; see onNetworkChanged.
+    private NetworkMonitor networkMonitor;
+
     private TextView    statusText;
     private int         defaultStatusColor;    // status text's normal colour (for reset after errors)
     private boolean     authFailureHandled;    // guard so a push auth failure auto-stops only once
@@ -99,13 +113,17 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     private TextView    authBadge;
     private TextView    previewHint;
     private TextView    broadcastLabel;
+    private TextView    recordLabel;
     private View        liveDot;
     private ImageButton broadcastButton;
+    private ImageButton blackoutButton;
     private ImageButton recordButton;
     private ImageButton snapshotButton;
     private ImageButton settingsButton;
     private TextureView previewView;
     private volatile Surface previewSurface;
+    /** Camera/resolution selection the cached captureW/H belong to; see sizePreviewBuffer. */
+    private String      captureSizeKey = "";
 
     // Settings page (pushed overlay) — see showSettingsPage()/hideSettingsPage().
     private View        settingsPage;
@@ -126,8 +144,10 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         authBadge       = root.findViewById(R.id.icu_auth_badge);
         previewHint     = root.findViewById(R.id.icu_preview_hint);
         broadcastLabel  = root.findViewById(R.id.icu_broadcast_label);
+        recordLabel     = root.findViewById(R.id.icu_record_label);
         liveDot         = root.findViewById(R.id.icu_live_dot);
         broadcastButton = root.findViewById(R.id.icu_broadcast_button);
+        blackoutButton  = root.findViewById(R.id.icu_blackout_button);
         recordButton    = root.findViewById(R.id.icu_record_button);
         snapshotButton  = root.findViewById(R.id.icu_snapshot_button);
         settingsButton  = root.findViewById(R.id.icu_settings_button);
@@ -151,6 +171,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         root.findViewById(R.id.icu_settings_cancel).setOnClickListener(v -> hideSettingsPage());
 
         broadcastButton.setOnClickListener(v -> toggleBroadcast());
+        blackoutButton.setOnClickListener(v -> showBlackout());
         recordButton.setOnClickListener(v -> takeRecord());
         snapshotButton.setOnClickListener(v -> takeSnapshot());
         settingsButton.setOnClickListener(v -> showSettingsPage());
@@ -169,6 +190,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
         previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override public void onSurfaceTextureAvailable(SurfaceTexture st, int w, int h) {
+                sizePreviewBuffer(st);
                 previewSurface = new Surface(st);
                 applyPreviewRotation();
                 // Re-attach preview to an already-running capture session (dropdown reopened
@@ -176,6 +198,13 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 pipeline.setPreviewSurface(previewSurface);
             }
             @Override public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) {
+                // TextureView resets the buffer to the new view size on every layout pass,
+                // so re-pin it — but do NOT rebuild the capture session here. A live session
+                // has already latched its buffer size (Camera2 sizes the producer itself, so
+                // the reset can't affect the running stream), and rebuilding on every layout
+                // tick thrashes the camera into a frozen preview. The pin only has to be
+                // right before the *next* configuration, which happens on attach/start.
+                sizePreviewBuffer(st);
                 applyPreviewRotation();
             }
             @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture st) {
@@ -188,6 +217,41 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             }
             @Override public void onSurfaceTextureUpdated(SurfaceTexture st) {}
         });
+    }
+
+    /**
+     * Pin the preview's buffer to the same size the encoder captures at.
+     *
+     * <p>Camera2 gives each output stream the sensor's full field of view only when that
+     * output's aspect ratio matches the native (full-FOV) aspect; anything else is
+     * <b>center-cropped</b> to fit. Left alone, a TextureView's SurfaceTexture defaults its
+     * buffer to the on-screen view size — the drop-down pane's shape — so the camera picked a
+     * differently-shaped preview stream and the operator saw a narrower, zoomed-in view than
+     * what was actually going out on the wire (the encoder path is explicitly sized to the
+     * native aspect in {@code GlRotationPipe}). Sizing the preview buffer to
+     * {@code captureW×captureH} puts both outputs on one FOV, so the pane shows the real
+     * broadcast frame.</p>
+     *
+     * <p>Must be called <i>before</i> the Surface is handed to the capture session — the size
+     * is latched at session configuration.</p>
+     */
+    private void sizePreviewBuffer(SurfaceTexture st) {
+        // While running, captureW/H are already authoritative (set by CapturePipeline.start);
+        // re-resolving would be redundant and could disagree with the live encoder.
+        if (!pipeline.isRunning()) {
+            // This runs on layout passes, so memoize — resolving hits CameraManager and the
+            // answer only moves when the camera or resolution selection does.
+            String key = config.cameraId + "|" + config.useFrontCamera + "|" + config.resolution;
+            if (!key.equals(captureSizeKey)) {
+                try {
+                    CapturePipeline.resolveCaptureSize(atakContext(), config);
+                    captureSizeKey = key;
+                } catch (Exception e) {
+                    Log.w(TAG, "resolveCaptureSize: " + e.getMessage());
+                }
+            }
+        }
+        st.setDefaultBufferSize(config.captureW, config.captureH);
     }
 
     /** Rotate the preview upright and letterbox it to the source aspect ratio. Manual
@@ -295,7 +359,24 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                         name + " unavailable: " + message, Toast.LENGTH_LONG).show()));
         transports.startAll(config);
 
+        // Every destination failed — nothing would reach a viewer. Bail instead of running
+        // the camera and encoder into a void: push mode registers exactly one transport, so
+        // picking a protocol that can't start (SRT is still an unimplemented stub) would
+        // otherwise leave the pane reading LIVE while publishing nowhere.
+        if (transports.activeCount() == 0) {
+            transports = null;
+            resetIdleUi();
+            setStatusError("No transport available — nothing would be broadcast");
+            return;
+        }
+
         pipeline.setSink(transports);
+        // The pane's buffer was sized for whatever camera/resolution was selected when the
+        // surface appeared; settings may have changed since. Re-pin it to the size this run
+        // will actually capture at, before the session latches it.
+        if (previewView != null && previewView.getSurfaceTexture() != null) {
+            sizePreviewBuffer(previewView.getSurfaceTexture());
+        }
         pipeline.start(atakContext(), config, previewSurface, new CapturePipeline.Listener() {
             @Override public void onStarted() {
                 ui.post(() -> {
@@ -316,6 +397,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     // video handlers). Deterministic URL — a push transport may not be up yet.
                     sensor.start(advertisedEndpoint().url, serverConfig.alias,
                             config.fovRefreshSec, config.fovRangeM);
+                    klv.start(atakContext(), getMapView(), transports, serverConfig.alias);
                     // Register the stream on the TAK Server's Video Feed Manager (server DB)
                     // when pushing to a server — makes it discoverable server-side, not just
                     // via the CoT feed on the self marker.
@@ -324,13 +406,27 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                         videoPublisher.publish(serverConfig, serverConfig.feedUuid);
                     }
                     statusWidget.setStreaming(true);
+                    startNetworkMonitor();
                     updateLiveStatus(0);
+                    // UsbCameraSource reports "open" as soon as the UVC device accepts
+                    // startPreview, which isn't proof that frames follow — a camera can sit
+                    // there delivering nothing and raise no error at all. Watch for the
+                    // first encoded frame and fall back if none arrives.
+                    armFeedWatchdog();
                 });
             }
             @Override public void onError(String message) {
                 Log.w(TAG, "capture error: " + message);
                 ui.post(() -> {
+                    // A USB camera that never showed up, lost permission, or was unplugged
+                    // mid-stream shouldn't end the broadcast — drop back to the built-in
+                    // camera and keep the operator on the air.
+                    if (shouldFallBackFromUsb()) { fallbackToDeviceCamera(message); return; }
+                    cancelFeedWatchdog();
+                    stopRecording(true);   // the encoder feeding it is gone
+                    stopNetworkMonitor();
                     sensor.stop();
+                    klv.stop();
                     if (transports != null) transports.stopAll();
                     releaseWakeLock();
                     statusWidget.setStreaming(false);
@@ -339,13 +435,84 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 });
             }
             @Override public void onFrame(int totalNalUnits) {
+                // First encoded NAL = the source is genuinely delivering frames.
+                if (totalNalUnits == 1) ui.post(ICUVideoDropDownReceiver.this::cancelFeedWatchdog);
                 if (totalNalUnits % 30 == 0) ui.post(() -> updateLiveStatus(totalNalUnits));
+            }
+            @Override public void onSourceOpened() {
+                ui.post(ICUVideoDropDownReceiver.this::armFeedWatchdog);
             }
         });
     }
 
+    // ── USB camera fallback ──────────────────────────────────────────────────────
+
+    /** How long to wait for the first encoded frame before declaring the USB source dead.
+     *  Generous: UVC enumeration + the OS permission prompt can eat several seconds. */
+    private static final long USB_FEED_TIMEOUT_MS = 8000;
+
+    /** Set once this broadcast has already fallen back, so a built-in camera that also
+     *  fails reports normally instead of looping. Cleared by {@link #stopBroadcast}. */
+    private boolean  usbFallbackUsed;
+    private Runnable feedWatchdog;
+
+    /** True when a USB-sourced broadcast is live and hasn't already used its one fallback. */
+    private boolean shouldFallBackFromUsb() {
+        return !usbFallbackUsed
+                && EncoderConfig.CAMERA_ID_USB.equals(config.cameraId)
+                && transports != null;   // a broadcast we started, not a stale callback
+    }
+
+    private void armFeedWatchdog() {
+        cancelFeedWatchdog();
+        if (!EncoderConfig.CAMERA_ID_USB.equals(config.cameraId)) return;
+        feedWatchdog = () -> {
+            feedWatchdog = null;
+            if (shouldFallBackFromUsb()) fallbackToDeviceCamera("no video from the USB camera");
+        };
+        ui.postDelayed(feedWatchdog, USB_FEED_TIMEOUT_MS);
+    }
+
+    private void cancelFeedWatchdog() {
+        if (feedWatchdog != null) { ui.removeCallbacks(feedWatchdog); feedWatchdog = null; }
+    }
+
+    /**
+     * Swap a dead USB source for the phone's own camera and resume broadcasting.
+     *
+     * <p>Restarts the whole pipeline rather than hot-swapping the source: the encoder and GL
+     * stage are sized to the capture dimensions, and the built-in camera's differ from the
+     * USB path's, so new SPS/PPS have to be signalled. Viewers will need to reconnect —
+     * still better than a stream that silently dies when a cable comes loose.</p>
+     *
+     * <p>The change is deliberately <b>not</b> persisted: the operator's saved choice stays
+     * "USB camera", so plugging the camera back in and starting again retries it.</p>
+     */
+    private void fallbackToDeviceCamera(String why) {
+        Log.w(TAG, "USB camera unusable (" + why + ") — falling back to the built-in camera");
+        cancelFeedWatchdog();
+        stopBroadcast();
+        // After stopBroadcast, which clears the flag — this restart is the one fallback.
+        usbFallbackUsed = true;
+        config.cameraId      = "";      // auto — front/back per useFrontCamera
+        config.useFrontCamera = false;  // rear: the sensible default for a mounted feed
+        captureSizeKey       = "";      // force a re-resolve for the new source
+        setStatus("USB camera unavailable — switching to the built-in camera…");
+        Toast.makeText(pluginContext,
+                "USB camera unavailable (" + why + ") — switched to the built-in camera",
+                Toast.LENGTH_LONG).show();
+        startBroadcast();
+    }
+
     private void stopBroadcast() {
+        cancelFeedWatchdog();
+        // Recording rides this broadcast's encoder, so it ends with it — finalize the MP4
+        // before the encoder goes away rather than leaving a truncated file.
+        stopRecording(true);
+        stopNetworkMonitor();
+        usbFallbackUsed = false;
         sensor.stop();                       // revert self marker to the user's prefs
+        klv.stop();
         // Flip the server feed inactive (can't DELETE it with an EUD cert).
         if (serverConfig.pushEnabled()
                 && serverConfig.feedUuid != null && !serverConfig.feedUuid.isEmpty()) {
@@ -364,12 +531,21 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         return (cs != null && !cs.trim().isEmpty()) ? cs.trim() : "VIDEO_1";
     }
 
-    /** Default stream path — the callsign (path-safe), else icu. Avoids operators
-     *  colliding on the same server path when they clear the field. */
+    /** Strip a name down to what a server path can carry. */
+    private static String pathSafe(String s) {
+        return s == null ? "" : s.trim().replaceAll("[^A-Za-z0-9_-]", "");
+    }
+
+    /** Default stream path — the broadcast alias (path-safe), else the callsign, else icu.
+     *  The alias is the name the operator gives this feed, so the path follows it; deriving
+     *  from the callsign meant a rename left the path pinned to whatever the callsign
+     *  happened to be when the field was first filled. Still avoids operators colliding on
+     *  the same server path when they clear the field. */
     private String defaultPath() {
-        String cs = getMapView().getDeviceCallsign();
-        if (cs != null) cs = cs.replaceAll("[^A-Za-z0-9_-]", "");
-        return (cs != null && !cs.isEmpty()) ? cs : "icu";
+        String a = pathSafe(serverConfig.alias);
+        if (!a.isEmpty()) return a;
+        String cs = pathSafe(getMapView().getDeviceCallsign());
+        return !cs.isEmpty() ? cs : "icu";
     }
 
     /** Ensure a stable feed id exists (generate + persist once) for server dedupe.
@@ -385,6 +561,51 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             serverConfig.feedUuid = haveCs ? "ICU-" + cs : java.util.UUID.randomUUID().toString();
             Prefs.save(atakContext(), serverConfig, config);
         }
+    }
+
+    // ── Network handover ─────────────────────────────────────────────────────────
+    // Switching Wi-Fi to LTE (or hopping APs) kills every socket the broadcast holds: they
+    // are bound to an address the device no longer owns, and TCP has no idea its interface
+    // went away, so nothing recovers by itself. Left alone the encoder keeps running, the
+    // transports keep writing into dead sockets, and the pane keeps reporting LIVE while
+    // no viewer receives anything. We watch for the handover and redial instead.
+
+    private void startNetworkMonitor() {
+        if (networkMonitor != null) return;
+        networkMonitor = new NetworkMonitor(atakContext(), this::onNetworkChanged);
+        networkMonitor.start();
+    }
+
+    private void stopNetworkMonitor() {
+        if (networkMonitor != null) { networkMonitor.stop(); networkMonitor = null; }
+    }
+
+    /** The default network moved. Redial the transports and correct what we advertise. */
+    private void onNetworkChanged() {
+        if (!pipeline.isRunning()) return;   // stale callback after the broadcast ended
+        Log.d(TAG, "network changed while live — reconnecting transports");
+
+        // Let a fresh failure be reported: the previous broadcast-killing verdict, if any,
+        // was reached on a network that is no longer the one we are using.
+        authFailureHandled = false;
+
+        if (transports != null) transports.reconnectAll(config);
+
+        // On LAN the advertised URL embeds this device's own IP, which just changed, so
+        // peers are holding a link to an address that is no longer ours. Re-derive it and
+        // let the next FOV tick carry the correction out on the self report.
+        String url = advertisedEndpoint().url;
+        sensor.setUrl(url);
+
+        // Same for the server-side feed registration when pushing.
+        if (serverConfig.pushEnabled()
+                && serverConfig.feedUuid != null && !serverConfig.feedUuid.isEmpty()) {
+            videoPublisher.publish(serverConfig, serverConfig.feedUuid);
+        }
+
+        setStatus("Network changed — reconnecting…");
+        Toast.makeText(pluginContext, "Network changed — reconnecting the stream…",
+                Toast.LENGTH_SHORT).show();
     }
 
     private android.os.PowerManager.WakeLock wakeLock;
@@ -558,9 +779,108 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         }
     }
 
-    /** Local MP4 recording — planned; the encoded stream is already flowing to transports. */
+    // ── Local recording ──────────────────────────────────────────────────────────
+    // Records the broadcast's own encoded stream to an MP4 (see Mp4Recorder). Works with
+    // the pane closed — the record button and its label exist from construction, and the
+    // headless RECORD intent (self-marker radial) lands here too.
+
+    /** Where recordings are written, under ATAK's external files directory. Named for the
+     *  plugin rather than the bare "ICU" the snapshot path uses, so the folder is
+     *  recognizable to someone browsing the device's storage. */
+    private java.io.File recordingsDir() {
+        return new java.io.File(atakContext().getExternalFilesDir(null), "ATAK ICU/recordings");
+    }
+
     private void takeRecord() {
-        Toast.makeText(atakContext(), "Local recording is coming soon.", Toast.LENGTH_SHORT).show();
+        if (recorder.isRunning()) { stopRecording(true); return; }
+
+        if (!pipeline.isRunning()) {
+            Toast.makeText(atakContext(),
+                    "Start broadcasting first — recording captures the broadcast stream.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        try {
+            String stamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+                    .format(new java.util.Date());
+            java.io.File f = new java.io.File(recordingsDir(), "ICU_" + stamp + ".mp4");
+            boolean started = recorder.start(f,
+                    pipeline.getEncodedWidth(), pipeline.getEncodedHeight(),
+                    pipeline.getSps(), pipeline.getPps(),
+                    pipeline.getAudioAsc(), pipeline.getAudioSampleRate(),
+                    pipeline.getAudioChannels());
+            if (!started) {
+                // No SPS/PPS yet — the encoder has only just been asked to start.
+                Toast.makeText(atakContext(), "Not ready to record yet — try again in a moment.",
+                        Toast.LENGTH_SHORT).show();
+                return;
+            }
+            pipeline.setRecorder(recorder);   // start the tee only once the file is open
+            setRecordingUi();
+            Toast.makeText(atakContext(),
+                    "Recording to " + f.getName(), Toast.LENGTH_SHORT).show();
+        } catch (Throwable t) {
+            Log.w(TAG, "record start failed", t);
+            pipeline.setRecorder(null);
+            recorder.stop();
+            resetRecordUi();
+            Toast.makeText(atakContext(), "Recording failed to start: " + t.getMessage(),
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** Finalize the MP4 and put the record button back to idle. Safe when not recording.
+     *  {@code notify} shows the operator where the file went (suppressed on plugin teardown). */
+    private void stopRecording(boolean notify) {
+        pipeline.setRecorder(null);          // stop feeding before finalizing the file
+        Mp4Recorder.Result r = recorder.stop();
+        stopRecordTicker();
+        resetRecordUi();
+        if (r == null || !notify) return;
+        if (r.ok) {
+            Toast.makeText(atakContext(),
+                    "Recording saved: " + (r.file != null ? r.file.getName() : "?")
+                            + " (" + mmss(r.durationMs) + ")", Toast.LENGTH_LONG).show();
+        } else {
+            Toast.makeText(atakContext(), "Recording failed: " + r.error, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void setRecordingUi() {
+        recordButton.setBackgroundResource(R.drawable.bg_hud_button_danger);
+        startRecordTicker();
+    }
+
+    private void resetRecordUi() {
+        recordButton.setBackgroundResource(R.drawable.bg_hud_button);
+        if (recordLabel != null) recordLabel.setText(R.string.icu_record);
+    }
+
+    /** Live elapsed readout under the record button; also the watchdog that reconciles the
+     *  UI if the recorder gave up on its own (a muxer write failure ends recording without
+     *  the operator touching anything, and must not leave the button showing REC). */
+    private Runnable recordTicker;
+
+    private void startRecordTicker() {
+        stopRecordTicker();
+        recordTicker = new Runnable() {
+            @Override public void run() {
+                if (!recorder.isRunning()) { stopRecording(true); return; }
+                if (recordLabel != null)
+                    recordLabel.setText("REC " + mmss(recorder.elapsedMs()));
+                ui.postDelayed(this, 1000);
+            }
+        };
+        ui.post(recordTicker);
+    }
+
+    private void stopRecordTicker() {
+        if (recordTicker != null) { ui.removeCallbacks(recordTicker); recordTicker = null; }
+    }
+
+    private static String mmss(long ms) {
+        long total = ms / 1000;
+        return String.format(java.util.Locale.US, "%d:%02d", total / 60, total % 60);
     }
 
     // ── Status UI ────────────────────────────────────────────────────────────────
@@ -570,9 +890,18 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
         // A server push that failed (e.g. bad credentials) isn't reaching anyone, even
         // though the encoder keeps producing frames — so stop the broadcast outright
-        // instead of showing a false "LIVE".
+        // instead of showing a false "LIVE". Transports only report a failure once they
+        // have exhausted their redials, so a handover in progress doesn't land here.
         String failure = (transports != null) ? transports.failureReason() : null;
         if (failure != null) { handlePushFailure(failure); return; }
+
+        // Mid-redial: frames are being produced but nothing is reaching a viewer yet. Say
+        // so rather than showing LIVE over a connection that does not currently exist.
+        if (transports != null && transports.reconnecting()) {
+            setStatus("Reconnecting…");
+            liveDot.setVisibility(View.GONE);
+            return;
+        }
 
         int viewers = (transports != null) ? transports.totalViewers() : 0;
         StringBuilder s = new StringBuilder("LIVE · ").append(config.resolution.label);
@@ -655,14 +984,45 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
             final CharSequence[] resOpts  = pta(R.array.icu_resolutions);
             final CharSequence[] fpsOpts  = pta(R.array.icu_framerates);
             final CharSequence[] rotOpts  = pta(R.array.icu_rotations);
-            final CharSequence[] camOpts  = pta(R.array.icu_cameras);
+
+            // Camera list is built live from Camera2 (not a static string-array) so a
+            // plugged-in USB/UVC camera that Android surfaces as LENS_FACING_EXTERNAL
+            // shows up automatically alongside the built-in front/back cameras. A "USB
+            // camera (UVC)" entry is always appended too — most Android builds don't
+            // register a UVC webcam via Camera2 at all, so that entry routes through
+            // UsbCameraSource (com.herohan:UVCAndroid) instead, independent of whether
+            // Camera2 saw anything.
+            final List<CameraSource.CameraOption> camList = CameraSource.listCameras(ctx);
+            camList.add(CameraSource.usbOption());
+            final CharSequence[] camOpts;
+            if (camList.isEmpty()) {
+                camOpts = pta(R.array.icu_cameras);   // fallback: legacy front/back toggle
+            } else {
+                camOpts = new CharSequence[camList.size()];
+                for (int i = 0; i < camList.size(); i++) camOpts[i] = camList.get(i).label;
+            }
 
             sel[0] = serverConfig.destination == MediaServerConfig.Destination.SERVER ? 1 : 0;
             sel[1] = config.resolution.ordinal();
             sel[2] = fpsIndex(config.fps);
             sel[3] = rotationIndex(config.rotationDegrees);
             sel[4] = serverConfig.pushProtocol.ordinal();
-            sel[5] = config.useFrontCamera ? 1 : 0;
+            sel[5] = 0;
+            if (!camList.isEmpty()) {
+                // Prefer an exact id match (from a prior save); otherwise fall back to
+                // the legacy front/back preference so upgrades keep their old choice.
+                int idIdx = -1, facingIdx = -1;
+                for (int i = 0; i < camList.size(); i++) {
+                    CameraSource.CameraOption opt = camList.get(i);
+                    if (opt.id.equals(config.cameraId)) { idIdx = i; break; }
+                    boolean wantFront = config.useFrontCamera;
+                    boolean isFront = opt.facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT;
+                    if (facingIdx < 0 && isFront == wantFront) facingIdx = i;
+                }
+                sel[5] = idIdx >= 0 ? idIdx : Math.max(facingIdx, 0);
+            } else {
+                sel[5] = config.useFrontCamera ? 1 : 0;
+            }
             // Staged like the rest of the fields — only committed to serverConfig on Save.
             final String[] scannedPassphrase = {serverConfig.srtPassphrase};
 
@@ -682,6 +1042,23 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     Integer.toString(serverConfig.serverPort), android.text.InputType.TYPE_CLASS_NUMBER);
             final EditText path = addEdit(ctx, srv, ps(R.string.icu_path),
                     serverConfig.streamPath, android.text.InputType.TYPE_CLASS_TEXT);
+            // Keep the stream path following the Broadcast Alias as it's typed, so renaming
+            // the feed actually changes the URL viewers use. Tracks the path box only while
+            // the operator hasn't typed their own value into it — once they edit the path
+            // directly it stops following, so a server that needs a fixed path still works.
+            final String[] trackedPath = { path.getText().toString().trim() };
+            alias.addTextChangedListener(new android.text.TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+                @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+                @Override public void afterTextChanged(android.text.Editable e) {
+                    String current = path.getText().toString().trim();
+                    if (!current.equals(trackedPath[0])) return;   // operator pinned it
+                    String next = pathSafe(e.toString());
+                    trackedPath[0] = next;
+                    path.setText(next);
+                }
+            });
+
             final EditText user = addEdit(ctx, srv, ps(R.string.icu_username),
                     serverConfig.username, android.text.InputType.TYPE_CLASS_TEXT);
             final EditText pass = addEdit(ctx, srv, ps(R.string.icu_password),
@@ -779,19 +1156,37 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     new QrScanDialog(ctx, config.rotationDegrees, text -> {
                         try {
                             StreamUrlParser.Parsed p = StreamUrlParser.parse(text);
+                            // Only the server identity always comes from the QR. Every
+                            // other field is applied *only when the QR carries it*, so one
+                            // shared code can provision a whole fleet without clobbering
+                            // the per-device stream path and alias — which default to the
+                            // operator callsign (see defaultPath()/defaultAlias()) precisely
+                            // so operators don't collide on the server.
                             sel[0] = 1; destBtn.setText(destOpts[1]); srv.setVisibility(View.VISIBLE);
                             sel[4] = p.protocol.ordinal(); protoBtn.setText(protoOpts[sel[4]]);
                             address.setText(p.host);
                             port.setText(Integer.toString(p.port));
-                            path.setText(p.path);
                             String msg = "Filled in from QR: " + p.protocol + " " + p.host + ":" + p.port;
+                            if (p.path != null) {
+                                path.setText(p.path);
+                                msg += "/" + p.path;
+                            } else {
+                                msg += " — kept path \"" + str(path, defaultPath()) + "\"";
+                            }
                             if (p.passphrase != null) {
                                 scannedPassphrase[0] = p.passphrase;
                                 msg += " (passphrase captured)";
                             }
-                            if (p.name != null && !p.name.isEmpty()) {
+                            if (p.username != null) {
+                                user.setText(p.username);
+                                if (p.password != null) pass.setText(p.password);
+                                msg += " (credentials captured)";
+                            }
+                            if (p.name != null) {
                                 alias.setText(p.name);
                                 msg += " — \"" + p.name + "\"";
+                            } else {
+                                msg += " — kept alias \"" + str(alias, defaultAlias()) + "\"";
                             }
                             Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show();
                         } catch (IllegalArgumentException e) {
@@ -821,7 +1216,16 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                 config.fps = intOf(fpsOpts[sel[2]].toString(), 30);
                 config.bitrateKbps = intOf(bitrate, 2500);
                 config.rotationDegrees = rotationValue(sel[3]);
-                config.useFrontCamera = sel[5] == 1;
+                if (!camList.isEmpty()) {
+                    CameraSource.CameraOption opt = camList.get(
+                            Math.max(0, Math.min(sel[5], camList.size() - 1)));
+                    config.cameraId = opt.id;
+                    config.useFrontCamera =
+                            opt.facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT;
+                } else {
+                    config.cameraId = "";
+                    config.useFrontCamera = sel[5] == 1;
+                }
                 config.gopSeconds = gopVals[gopSel[0]];
                 config.fovRefreshSec = Math.max(1, intOf(fovRefresh, 3));
                 config.fovRangeM = Math.max(1, intOf(fovRange, 100));
@@ -1125,9 +1529,12 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
     @Override
     protected void disposeImpl() {
+        stopRecording(false);
+        stopNetworkMonitor();
         pipeline.stop();
         if (transports != null) { transports.stopAll(); transports = null; }
         sensor.stop();
+        klv.stop();
         releaseWakeLock();
         dismissBlackout();
     }

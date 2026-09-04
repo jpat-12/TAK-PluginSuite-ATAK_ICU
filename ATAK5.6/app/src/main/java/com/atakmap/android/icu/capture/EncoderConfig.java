@@ -33,6 +33,21 @@ public class EncoderConfig {
     public boolean    useFrontCamera = false;
 
     /**
+     * Camera2 id to open, as reported by {@link CameraSource#listCameras}. Empty = auto
+     * (pick front/back per {@link #useFrontCamera}, the pre-existing behavior). Set to a
+     * specific id — including a {@code LENS_FACING_EXTERNAL} device, i.e. a USB/UVC camera
+     * the OS already exposes through Camera2 — to pin the capture source to it.
+     *
+     * <p>Reserved value {@link #CAMERA_ID_USB} instead routes capture through
+     * {@link UsbCameraSource} (the {@code com.herohan:UVCAndroid} driver) for USB cameras
+     * that Camera2 doesn't surface at all — the common case on stock Android.</p>
+     */
+    public String cameraId = "";
+
+    /** Sentinel {@link #cameraId} value selecting the direct UVC (USB) capture path. */
+    public static final String CAMERA_ID_USB = "usb";
+
+    /**
      * Extra rotation applied to the preview (and, best-effort, the encoded stream).
      * -1 = Auto (derive from sensor + display); otherwise 0/90/180/270.
      * Manual override exists because some devices show inverted video in landscape.

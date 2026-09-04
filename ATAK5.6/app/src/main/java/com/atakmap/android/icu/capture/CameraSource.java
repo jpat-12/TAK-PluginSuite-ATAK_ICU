@@ -42,6 +42,60 @@ public class CameraSource {
         void onError(String message);
     }
 
+    /** One Camera2 device as reported by {@link #listCameras}. */
+    public static class CameraOption {
+        public final String id;
+        public final String label;
+        public final int facing;   // CameraCharacteristics.LENS_FACING_*
+        CameraOption(String id, String label, int facing) {
+            this.id = id; this.label = label; this.facing = facing;
+        }
+    }
+
+    /**
+     * Synthetic entry for the settings picker representing the direct UVC (USB) capture
+     * path — {@link UsbCameraSource} — for USB cameras Camera2 doesn't surface at all
+     * (the common case; see {@link #listCameras} for the Camera2-visible case).
+     */
+    public static CameraOption usbOption() {
+        return new CameraOption(com.atakmap.android.icu.capture.EncoderConfig.CAMERA_ID_USB,
+                "USB camera (UVC)", CameraCharacteristics.LENS_FACING_EXTERNAL);
+    }
+
+    /**
+     * Enumerate every camera Camera2 exposes, including USB/UVC webcams that the OS
+     * surfaces as {@code LENS_FACING_EXTERNAL} devices (some Android builds with USB
+     * host + UVC support auto-register a plugged-in camera this way — no vendor SDK
+     * needed). Returns an empty list on any CameraManager failure.
+     */
+    public static List<CameraOption> listCameras(Context ctx) {
+        List<CameraOption> out = new ArrayList<>();
+        try {
+            CameraManager manager = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
+            String[] ids = manager.getCameraIdList();
+            int externalCount = 0;
+            for (String id : ids) {
+                CameraCharacteristics ch = manager.getCameraCharacteristics(id);
+                Integer facing = ch.get(CameraCharacteristics.LENS_FACING);
+                int f = facing != null ? facing : CameraCharacteristics.LENS_FACING_BACK;
+                String label;
+                if (f == CameraCharacteristics.LENS_FACING_FRONT) {
+                    label = "Front camera";
+                } else if (f == CameraCharacteristics.LENS_FACING_EXTERNAL) {
+                    externalCount++;
+                    label = externalCount > 1
+                            ? "External camera (USB) " + externalCount : "External camera (USB)";
+                } else {
+                    label = "Rear camera";
+                }
+                out.add(new CameraOption(id, label, f));
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "listCameras: " + e.getMessage());
+        }
+        return out;
+    }
+
     /** Result of a still capture (JPEG bytes), delivered off the camera thread. */
     public interface StillCallback {
         void onStill(byte[] jpeg);
@@ -59,6 +113,25 @@ public class CameraSource {
     private ImageReader stillReader;                 // always-on JPEG target for snapshots
     private volatile StillCallback pendingStill;     // callback for the in-flight capture
     private int     fps = 30;
+
+    /**
+     * Bumped on every {@link #startCaptureSession} call. Configuring a session is async, so
+     * a rebuild (preview attach/detach) can be issued while an earlier one is still in
+     * flight; without this, the older {@code onConfigured} lands last and installs a session
+     * whose repeating request points at a surface we already moved on from — the preview
+     * freezes on its last frame. Callbacks compare their generation and drop if superseded.
+     */
+    private final java.util.concurrent.atomic.AtomicInteger sessionGen =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /**
+     * Counts down when the camera device has actually finished closing. {@code close()} is
+     * asynchronous — the HAL still holds the camera when it returns — so a stop/start pair
+     * (switching cameras from Settings) would try to reopen while the previous device was
+     * still shutting down and fail with "Timed out acquiring camera". {@link #stop} waits
+     * on this so the restart is clean.
+     */
+    private volatile java.util.concurrent.CountDownLatch closeLatch;
     private volatile int sensorOrientation = 0;
     private volatile boolean frontFacing = false;
 
@@ -105,12 +178,13 @@ public class CameraSource {
 
         CameraManager manager = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
         try {
-            String cameraId = selectCamera(manager, config.useFrontCamera);
+            String cameraId = selectCamera(manager, config);
             if (cameraId == null) { cb.onError("No camera found"); return; }
             if (!cameraLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
                 cb.onError("Timed out acquiring camera");
                 return;
             }
+            closeLatch = new java.util.concurrent.CountDownLatch(1);
             // SecurityException here means the CAMERA permission wasn't actually granted.
             manager.openCamera(cameraId, new CameraDevice.StateCallback() {
                 @Override public void onOpened(CameraDevice camera) {
@@ -128,6 +202,11 @@ public class CameraSource {
                     camera.close();
                     cameraDevice = null;
                     cb.onError("Camera error " + error);
+                }
+                @Override public void onClosed(CameraDevice camera) {
+                    // The HAL has really let go now — stop() can stop waiting.
+                    java.util.concurrent.CountDownLatch l = closeLatch;
+                    if (l != null) l.countDown();
                 }
             }, cameraHandler);
         } catch (SecurityException e) {
@@ -153,11 +232,34 @@ public class CameraSource {
                 message -> Log.w(TAG, "setPreviewSurface: " + message)));
     }
 
+    /** How long {@link #stop} waits for the camera device to finish closing before giving
+     *  up and tearing down anyway — bounds the worst case if {@code onClosed} never lands. */
+    private static final long CLOSE_TIMEOUT_MS = 1500;
+
     public void stop() {
+        // Invalidate any session callback still in flight so it can't resurrect a session
+        // against surfaces we're about to drop.
+        sessionGen.incrementAndGet();
         try { if (captureSession != null) { captureSession.close(); captureSession = null; } }
         catch (Exception ignored) {}
+
+        java.util.concurrent.CountDownLatch l = closeLatch;
+        boolean wasOpen = cameraDevice != null;
         try { if (cameraDevice != null) { cameraDevice.close(); cameraDevice = null; } }
         catch (Exception ignored) {}
+        // Block until the HAL confirms the release. Without this, an immediate restart on a
+        // different camera id (Settings → Save while live) races the close and fails to open.
+        // onClosed arrives on the camera thread, so waiting here can't deadlock it.
+        if (wasOpen && l != null) {
+            try {
+                if (!l.await(CLOSE_TIMEOUT_MS, TimeUnit.MILLISECONDS))
+                    Log.w(TAG, "camera did not report closed within " + CLOSE_TIMEOUT_MS + "ms");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        closeLatch = null;
+
         try { if (stillReader != null) { stillReader.close(); stillReader = null; } }
         catch (Exception ignored) {}
         pendingStill = null;
@@ -206,39 +308,55 @@ public class CameraSource {
             try { captureSession.close(); } catch (Exception ignored) {}
             captureSession = null;
         }
+        final int gen = sessionGen.incrementAndGet();
+        // Snapshot the targets for this generation — the fields can change under us while
+        // configuration is in flight, and the request must match the session it configured.
+        final Surface encTarget = encoderSurface;
+        final Surface prevTarget = previewSurface;
         try {
             List<Surface> targets = new ArrayList<>();
-            targets.add(encoderSurface);
-            if (previewSurface != null) targets.add(previewSurface);
+            targets.add(encTarget);
+            if (prevTarget != null) targets.add(prevTarget);
             if (stillReader != null) targets.add(stillReader.getSurface());  // snapshot target
 
             camera.createCaptureSession(targets, new CameraCaptureSession.StateCallback() {
+                /** False once a newer rebuild (or stop) has superseded this one. */
+                private boolean isCurrent() { return gen == sessionGen.get(); }
+
                 @Override public void onConfigured(CameraCaptureSession session) {
+                    if (!isCurrent()) {
+                        // A newer session is already being configured; installing this one
+                        // would leave the repeating request on stale surfaces.
+                        try { session.close(); } catch (Exception ignored) {}
+                        return;
+                    }
                     captureSession = session;
                     try {
                         CaptureRequest.Builder req =
                                 camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
-                        req.addTarget(encoderSurface);
-                        if (previewSurface != null) req.addTarget(previewSurface);
+                        req.addTarget(encTarget);
+                        if (prevTarget != null) req.addTarget(prevTarget);
                         req.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
                                 new Range<>(fps, fps));
                         session.setRepeatingRequest(req.build(), null, cameraHandler);
-                    } catch (CameraAccessException e) {
+                    } catch (CameraAccessException | IllegalStateException e) {
                         cb.onError("Repeating request: " + e.getMessage());
                     }
                 }
                 @Override public void onConfigureFailed(CameraCaptureSession session) {
+                    if (!isCurrent()) return;
                     cb.onError("Capture session configuration failed");
                 }
             }, cameraHandler);
-        } catch (CameraAccessException e) {
+        } catch (CameraAccessException | IllegalStateException e) {
             cb.onError("createCaptureSession: " + e.getMessage());
         }
     }
 
-    private String selectCamera(CameraManager manager, boolean useFront)
+    private String selectCamera(CameraManager manager, EncoderConfig config)
             throws CameraAccessException {
-        String id = findCameraId(manager, useFront);
+        String id = (config.cameraId != null && !config.cameraId.isEmpty())
+                ? config.cameraId : findCameraId(manager, config.useFrontCamera);
         if (id != null) {
             android.hardware.camera2.CameraCharacteristics ch = manager.getCameraCharacteristics(id);
             Integer so = ch.get(CameraCharacteristics.SENSOR_ORIENTATION);
@@ -262,29 +380,71 @@ public class CameraSource {
     }
 
     /**
-     * Pick a capture size (landscape, w ≥ h) whose aspect ratio matches the sensor's native
-     * full-FOV aspect, at roughly {@code targetHeight}. Reads camera characteristics without
-     * opening the device, so the encoder can be sized to the native ratio before capture —
-     * the stream then shows the camera's true view, uncropped and unstretched, on any device.
-     * Falls back to {@code targetHeight}×16:9 if characteristics are unavailable.
+     * Pick a capture size (landscape, w ≥ h) that shows the camera's <b>full field of view</b>
+     * at roughly {@code targetHeight}.
+     *
+     * <p>The sensor crops to whatever aspect ratio you ask it for, so the aspect — not the
+     * resolution — is what decides how much of the scene viewers get. This never assumes a
+     * ratio: it derives the full-FOV shape from the camera itself and then picks the closest
+     * supported size at the caller's height budget. {@code targetHeight} is a quality budget
+     * only (the operator's 480p/720p/1080p choice); it never constrains the shape.</p>
+     *
+     * <p>Reads characteristics without opening the device, so the encoder, the GL stage and
+     * the on-screen preview can all be sized from one answer before capture starts — which is
+     * what keeps the pane and the stream showing the same frame.</p>
      */
     public static int[] chooseNativeCaptureSize(Context ctx, boolean useFront, int targetHeight) {
+        return chooseNativeCaptureSize(ctx, null, useFront, targetHeight);
+    }
+
+    /** Overload that pins the query to a specific camera id (e.g. an external/USB camera)
+     *  when {@code cameraId} is non-empty; otherwise falls back to the front/back logic. */
+    public static int[] chooseNativeCaptureSize(Context ctx, String cameraId, boolean useFront, int targetHeight) {
+        // Last-resort shape if the camera tells us nothing at all. Reaching this means we
+        // could not determine the sensor's shape, so the stream may be cropped — every path
+        // that returns it logs why, because a silent fallback here is invisible FOV loss.
         int fbH = targetHeight, fbW = (targetHeight * 16) / 9;
         try {
             CameraManager m = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
-            String id = findCameraId(m, useFront);
-            if (id == null) return new int[]{ fbW, fbH };
+            String id = (cameraId != null && !cameraId.isEmpty()) ? cameraId : findCameraId(m, useFront);
+            if (id == null) {
+                Log.w(TAG, "captureSize: no camera id; using " + fbW + "x" + fbH
+                        + " — FOV may be cropped");
+                return new int[]{ fbW, fbH };
+            }
             CameraCharacteristics ch = m.getCameraCharacteristics(id);
-
-            android.graphics.Rect arr = ch.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
-            float nativeAspect = (arr != null && arr.height() > 0)
-                    ? (float) arr.width() / arr.height() : 4f / 3f;   // landscape aspect
 
             android.hardware.camera2.params.StreamConfigurationMap map =
                     ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-            if (map == null) return new int[]{ fbW, fbH };
-            android.util.Size[] sizes = map.getOutputSizes(android.graphics.SurfaceTexture.class);
-            if (sizes == null || sizes.length == 0) return new int[]{ fbW, fbH };
+            android.util.Size[] sizes = (map == null)
+                    ? null : map.getOutputSizes(android.graphics.SurfaceTexture.class);
+            if (sizes == null || sizes.length == 0) {
+                Log.w(TAG, "captureSize: camera " + id + " reported no output sizes; using "
+                        + fbW + "x" + fbH + " — FOV may be cropped");
+                return new int[]{ fbW, fbH };
+            }
+
+            // Full-FOV aspect, preferring the authoritative source.
+            //   1. SENSOR_INFO_ACTIVE_ARRAY_SIZE — the actual readout rectangle.
+            //   2. The largest supported output — the max readout is the uncropped sensor,
+            //      so its shape is the shape that loses nothing. Used when (1) is absent,
+            //      which is common on external/USB cameras.
+            // No hardcoded ratio: guessing 4:3 or 16:9 here is exactly how FOV goes missing.
+            android.graphics.Rect arr = ch.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+            final float nativeAspect;
+            final String aspectSrc;
+            if (arr != null && arr.height() > 0) {
+                nativeAspect = (float) arr.width() / arr.height();
+                aspectSrc = "active array " + arr.width() + "x" + arr.height();
+            } else {
+                android.util.Size largest = null;
+                for (android.util.Size s : sizes) {
+                    if (largest == null || (long) s.getWidth() * s.getHeight()
+                            > (long) largest.getWidth() * largest.getHeight()) largest = s;
+                }
+                nativeAspect = (float) largest.getWidth() / largest.getHeight();
+                aspectSrc = "largest output " + largest.getWidth() + "x" + largest.getHeight();
+            }
 
             android.util.Size best = null;
             float bestAspectErr = Float.MAX_VALUE;
@@ -293,14 +453,33 @@ public class CameraSource {
                 float aspect = (float) s.getWidth() / s.getHeight();   // sizes are landscape
                 float aErr = Math.abs(aspect - nativeAspect);
                 int hErr = Math.abs(s.getHeight() - targetHeight);
-                // Prefer native aspect first, then the closest height to the target.
+                // Aspect first (it decides FOV), then the closest height to the budget.
                 if (aErr < bestAspectErr - 0.01f
                         || (Math.abs(aErr - bestAspectErr) <= 0.01f && hErr < bestHeightErr)) {
                     best = s; bestAspectErr = aErr; bestHeightErr = hErr;
                 }
             }
-            if (best != null) return new int[]{ best.getWidth(), best.getHeight() };
-        } catch (Exception ignored) {
+            if (best == null) {
+                Log.w(TAG, "captureSize: no usable output size; using " + fbW + "x" + fbH
+                        + " — FOV may be cropped");
+                return new int[]{ fbW, fbH };
+            }
+
+            Log.d(TAG, "captureSize: " + best.getWidth() + "x" + best.getHeight()
+                    + " (aspect " + String.format(java.util.Locale.US, "%.3f", nativeAspect)
+                    + " from " + aspectSrc + ", target height " + targetHeight
+                    + ", " + sizes.length + " sizes offered)");
+            if (bestAspectErr > 0.02f) {
+                // The camera offers nothing at its own full-FOV shape — the closest match
+                // will be cropped. Rare, but the operator deserves to know it's happening.
+                Log.w(TAG, "captureSize: closest supported aspect is off by "
+                        + String.format(java.util.Locale.US, "%.3f", bestAspectErr)
+                        + " — stream will be cropped");
+            }
+            return new int[]{ best.getWidth(), best.getHeight() };
+        } catch (Exception e) {
+            Log.w(TAG, "captureSize failed (" + e + "); using " + fbW + "x" + fbH
+                    + " — FOV may be cropped", e);
         }
         return new int[]{ fbW, fbH };
     }

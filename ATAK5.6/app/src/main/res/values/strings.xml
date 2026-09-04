@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">ICU VideoStreamer</string>
+    <string name="app_name">ATAK-ICU</string>
     <string name="app_desc">Stream the phone camera into ATAK and broadcast it to other users over the local network/mesh or a media server.</string>
 
     <string name="icu_status_idle">Idle — not broadcasting</string>
@@ -10,7 +10,9 @@
     <string name="icu_preview_placeholder">Camera preview</string>
     <string name="icu_settings">Settings</string>
     <string name="icu_record">Record</string>
+    <string name="icu_recording">Recording</string>
     <string name="icu_snapshot">Snapshot</string>
+    <string name="icu_blackout">Blackout</string>
 
     <!-- Settings -->
     <string name="icu_settings_title">Broadcast Settings</string>

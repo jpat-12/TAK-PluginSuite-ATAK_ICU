@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ICU VideoStreamer operator pane. A FrameLayout root so the Settings page can be
+<!-- ATAK-ICU operator pane. A FrameLayout root so the Settings page can be
      pushed as a full-pane overlay (with its own back button) on top of the HUD, rather
      than shown as a modal dialog. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -139,11 +139,21 @@
 
                 <LinearLayout style="@style/IcuQuickItemVertical">
                     <ImageButton
+                        android:id="@+id/icu_blackout_button"
+                        style="@style/IcuQuickButton"
+                        android:src="@drawable/ic_blackout"
+                        android:contentDescription="@string/icu_blackout" />
+                    <TextView style="@style/IcuQuickLabel" android:text="@string/icu_blackout" />
+                </LinearLayout>
+
+                <LinearLayout style="@style/IcuQuickItemVertical">
+                    <ImageButton
                         android:id="@+id/icu_record_button"
                         style="@style/IcuQuickButton"
                         android:src="@drawable/ic_record"
                         android:contentDescription="@string/icu_record" />
-                    <TextView style="@style/IcuQuickLabel" android:text="@string/icu_record" />
+                    <TextView android:id="@+id/icu_record_label" style="@style/IcuQuickLabel"
+                        android:text="@string/icu_record" />
                 </LinearLayout>
 
                 <LinearLayout style="@style/IcuQuickItemVertical" android:layout_marginBottom="0dp">

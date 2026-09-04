@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICU VideoStreamer — Server QR Generator</title>
+<style>
+  :root {
+    --bg: #10151b; --surface: #1a2129; --card: #202a35; --line: #2e3a47;
+    --text: #e8edf2; --dim: #8fa0b0; --accent: #35a0e0; --green: #2ecc71;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh; display: flex; justify-content: center; padding: 24px 16px;
+  }
+  .wrap { width: 100%; max-width: 880px; }
+  h1 { font-size: 20px; letter-spacing: .3px; }
+  .sub { color: var(--dim); font-size: 13px; margin: 4px 0 20px; }
+  .grid { display: grid; grid-template-columns: 1fr 340px; gap: 20px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+  label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+          color: var(--dim); margin: 14px 0 5px; }
+  label:first-of-type { margin-top: 0; }
+  input, select {
+    width: 100%; background: var(--surface); border: 1px solid var(--line); color: var(--text);
+    border-radius: 7px; padding: 10px 12px; font-size: 15px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button {
+    flex: 1; background: var(--surface); color: var(--dim); border: 0; padding: 10px 0;
+    font-size: 14px; cursor: pointer;
+  }
+  .seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
+  .hint { font-size: 12px; color: var(--dim); margin-top: 6px; }
+  .note { font-size: 12.5px; color: var(--dim); border-left: 3px solid var(--green);
+          padding: 8px 12px; margin-top: 18px; background: var(--surface); border-radius: 0 7px 7px 0; }
+  .qrbox { text-align: center; }
+  #qr { background: #fff; padding: 16px; border-radius: 8px; display: inline-block; line-height: 0; }
+  #qr svg { width: 260px; height: 260px; display: block; }
+  #url {
+    margin-top: 14px; font: 12.5px/1.5 ui-monospace, Menlo, monospace; color: var(--green);
+    word-break: break-all; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 7px; padding: 10px 12px; text-align: left; min-height: 42px;
+  }
+  #err { color: #e74c3c; font-size: 13px; margin-top: 10px; min-height: 18px; }
+  .btn {
+    margin-top: 14px; width: 100%; background: var(--accent); color: #fff; border: 0;
+    border-radius: 7px; padding: 11px 0; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { filter: brightness(1.1); }
+  .showpass { display: flex; align-items: center; gap: 7px; margin-top: 7px;
+              font-size: 13px; color: var(--dim); cursor: pointer; user-select: none; }
+  @media print {
+    body { background: #fff; color: #000; }
+    .card:first-child, .btn, #err, .sub, .note { display: none; }
+    .grid { grid-template-columns: 1fr; }
+    .card { border: 0; }
+    #url { color: #000; border: 1px solid #ccc; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ICU VideoStreamer — Server QR</h1>
+  <div class="sub">
+    Type in the media-server details, then scan the code from the plugin's settings
+    (<b>Scan QR</b>). Works fully offline — this file has no external dependencies.
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <label>Push protocol</label>
+      <div class="seg" id="proto">
+        <button data-p="rtsp" data-port="8554" class="on">RTSP</button>
+        <button data-p="rtmp" data-port="1935">RTMP</button>
+        <button data-p="srt"  data-port="8890">SRT</button>
+      </div>
+
+      <label for="host">Server address</label>
+      <input id="host" placeholder="stream.example.org or 192.168.1.50" autocomplete="off"
+             autocapitalize="none" spellcheck="false">
+
+      <label for="port">Port</label>
+      <input id="port" type="number" value="8554" min="1" max="65535">
+      <div class="hint">Defaults per protocol: RTSP 8554 · RTMP 1935 · SRT 8890.</div>
+
+      <div id="credFields">
+        <div class="row">
+          <div>
+            <label for="user">Username</label>
+            <input id="user" placeholder="(optional)" autocomplete="off" autocapitalize="none">
+          </div>
+          <div>
+            <label for="pass">Password</label>
+            <input id="pass" type="password" placeholder="(optional)" autocomplete="off">
+            <span class="showpass"><input type="checkbox" id="showpass" style="width:auto">Show password</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="srtFields" style="display:none">
+        <label for="passphrase">SRT passphrase</label>
+        <input id="passphrase" type="password" placeholder="(optional)" autocomplete="off">
+        <div class="hint">SRT username/password ride the stream path, which this QR
+          deliberately leaves per-device — use the passphrase instead.</div>
+      </div>
+
+      <div class="note">
+        <b>Server-only QR.</b> No stream name or path is included on purpose: each
+        device derives its broadcast alias and stream path from its own ATAK callsign,
+        so one code can provision the whole team without streams colliding.
+      </div>
+    </div>
+
+    <div class="card qrbox">
+      <div id="qr"></div>
+      <div id="url"></div>
+      <div id="err"></div>
+      <button class="btn" onclick="window.print()">Print</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── Minimal QR encoder (byte mode, EC level M, versions 1–13) ─────────────────
+   Self-contained so the page works with no network. Standard algorithm:
+   RS(255) over GF(2^8)/0x11D, per-version block table, BCH format/version info,
+   best-of-8 mask by run-length penalty. */
+(function () {
+  // GF(256) log/antilog tables.
+  const EXP = new Uint8Array(512), LOG = new Uint8Array(256);
+  for (let i = 0, x = 1; i < 255; i++) { EXP[i] = x; LOG[x] = i; x <<= 1; if (x & 0x100) x ^= 0x11d; }
+  for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255];
+  const gmul = (a, b) => (a && b) ? EXP[LOG[a] + LOG[b]] : 0;
+
+  // Level-M block structure per version: [ecPerBlock, g1Blocks, g1Data, g2Blocks, g2Data]
+  const BLOCKS = {
+    1:[10,1,16,0,0], 2:[16,1,28,0,0], 3:[26,1,44,0,0], 4:[18,2,32,0,0],
+    5:[24,2,43,0,0], 6:[16,4,27,0,0], 7:[18,4,31,0,0], 8:[22,2,38,2,39],
+    9:[22,3,36,2,37], 10:[26,4,43,1,44], 11:[30,1,50,4,51], 12:[22,6,36,2,37],
+    13:[22,8,37,1,38],
+  };
+  const ALIGN = {
+    1:[], 2:[6,18], 3:[6,22], 4:[6,26], 5:[6,30], 6:[6,34], 7:[6,22,38],
+    8:[6,24,42], 9:[6,26,46], 10:[6,28,52], 11:[6,30,54], 12:[6,32,58], 13:[6,34,62],
+  };
+
+  function rsEncode(data, ecLen) {
+    // Generator polynomial ∏(x - α^i), i = 0..ecLen-1.
+    let gen = [1];
+    for (let i = 0; i < ecLen; i++) {
+      const next = new Array(gen.length + 1).fill(0);
+      for (let j = 0; j < gen.length; j++) {
+        next[j] ^= gmul(gen[j], EXP[i]);
+        next[j + 1] ^= gen[j];
+      }
+      gen = next;
+    }
+    gen.reverse(); // highest degree first, leading 1
+    const res = new Uint8Array(ecLen);
+    for (const d of data) {
+      const factor = d ^ res[0];
+      res.copyWithin(0, 1); res[ecLen - 1] = 0;
+      if (factor) for (let j = 0; j < ecLen; j++) res[j] ^= gmul(gen[j + 1], factor);
+    }
+    return res;
+  }
+
+  const bch15 = v => { let d = v << 10; for (let i = 14; i >= 10; i--) if ((d >> i) & 1) d ^= 0x537 << (i - 10); return ((v << 10) | d) ^ 0x5412; };
+  const bch18 = v => { let d = v << 12; for (let i = 17; i >= 12; i--) if ((d >> i) & 1) d ^= 0x1f25 << (i - 12); return (v << 12) | d; };
+
+  const MASKS = [
+    (r,c)=>(r+c)%2===0, (r,c)=>r%2===0, (r,c)=>c%3===0, (r,c)=>(r+c)%3===0,
+    (r,c)=>(((r/2)|0)+((c/3)|0))%2===0, (r,c)=>(r*c)%2+(r*c)%3===0,
+    (r,c)=>((r*c)%2+(r*c)%3)%2===0, (r,c)=>((r+c)%2+(r*c)%3)%2===0,
+  ];
+
+  window.qrEncode = function (text) {
+    const bytes = new TextEncoder().encode(text);
+
+    // Smallest level-M version that fits (byte mode).
+    let version = 0;
+    for (let v = 1; v <= 13; v++) {
+      const [ec, g1b, g1s, g2b, g2s] = BLOCKS[v];
+      const cap = g1b * g1s + g2b * g2s;
+      const countBits = v <= 9 ? 8 : 16;
+      if (4 + countBits + bytes.length * 8 <= cap * 8) { version = v; break; }
+    }
+    if (!version) throw new Error("Too much data for one QR (max ~330 chars)");
+
+    const [ecLen, g1b, g1s, g2b, g2s] = BLOCKS[version];
+    const dataCap = g1b * g1s + g2b * g2s;
+
+    // Bit stream: mode 0100 + count + data, terminator, byte-align, pad EC 11.
+    const bits = [];
+    const push = (val, len) => { for (let i = len - 1; i >= 0; i--) bits.push((val >> i) & 1); };
+    push(0b0100, 4);
+    push(bytes.length, version <= 9 ? 8 : 16);
+    for (const b of bytes) push(b, 8);
+    push(0, Math.min(4, dataCap * 8 - bits.length));
+    while (bits.length % 8) bits.push(0);
+    const dataCw = [];
+    for (let i = 0; i < bits.length; i += 8) {
+      let b = 0; for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+      dataCw.push(b);
+    }
+    for (let p = 0; dataCw.length < dataCap; p ^= 1) dataCw.push(p ? 0x11 : 0xec);
+
+    // Split into blocks, compute EC, interleave.
+    const blocks = [], ecs = [];
+    let off = 0;
+    for (let b = 0; b < g1b + g2b; b++) {
+      const size = b < g1b ? g1s : g2s;
+      const chunk = dataCw.slice(off, off + size); off += size;
+      blocks.push(chunk); ecs.push(rsEncode(chunk, ecLen));
+    }
+    const out = [];
+    const maxLen = Math.max(g1s, g2s);
+    for (let i = 0; i < maxLen; i++) for (const bl of blocks) if (i < bl.length) out.push(bl[i]);
+    for (let i = 0; i < ecLen; i++) for (const e of ecs) out.push(e[i]);
+
+    // Matrix scaffolding. -1 = free for data; 0/1 = fixed function module.
+    const N = 17 + version * 4;
+    const m = Array.from({ length: N }, () => new Int8Array(N).fill(-1));
+    const setFixed = (r, c, v) => { if (r >= 0 && r < N && c >= 0 && c < N) m[r][c] = v; };
+    const finder = (r, c) => {
+      for (let dr = -1; dr <= 7; dr++) for (let dc = -1; dc <= 7; dc++) {
+        const inside = dr >= 0 && dr <= 6 && dc >= 0 && dc <= 6;
+        const on = inside && (dr === 0 || dr === 6 || dc === 0 || dc === 6 ||
+                              (dr >= 2 && dr <= 4 && dc >= 2 && dc <= 4));
+        setFixed(r + dr, c + dc, on ? 1 : 0);
+      }
+    };
+    finder(0, 0); finder(0, N - 7); finder(N - 7, 0);
+    // Alignment BEFORE timing: v7+ has alignment patterns centered ON the timing
+    // lines (e.g. (6,22)) which must be drawn — only ones overlapping a finder are
+    // skipped, and drawing order is what distinguishes the two cases here.
+    for (const r of ALIGN[version]) for (const c of ALIGN[version]) {
+      if (m[r][c] !== -1) continue;   // overlaps a finder
+      for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++)
+        setFixed(r + dr, c + dc, (Math.max(Math.abs(dr), Math.abs(dc)) !== 1) ? 1 : 0);
+    }
+    for (let i = 8; i < N - 8; i++) {
+      if (m[6][i] === -1) setFixed(6, i, i % 2 === 0 ? 1 : 0);
+      if (m[i][6] === -1) setFixed(i, 6, i % 2 === 0 ? 1 : 0);
+    }
+    setFixed(N - 8, 8, 1);   // dark module
+    // Reserve format areas (filled after masking).
+    for (let i = 0; i < 9; i++) { if (m[8][i] === -1) m[8][i] = 0; if (m[i][8] === -1) m[i][8] = 0; }
+    for (let i = 0; i < 8; i++) { if (m[8][N - 1 - i] === -1) m[8][N - 1 - i] = 0; if (m[N - 1 - i][8] === -1) m[N - 1 - i][8] = 0; }
+    if (version >= 7) {
+      for (let i = 0; i < 6; i++) for (let j = 0; j < 3; j++) { m[N - 11 + j][i] = 0; m[i][N - 11 + j] = 0; }
+    }
+
+    // Zigzag data placement (records positions so masks can be re-applied).
+    const cells = [];
+    {
+      let bit = 0, dir = -1, row = N - 1;
+      const total = out.length * 8;
+      for (let col = N - 1; col > 0; col -= 2) {
+        if (col === 6) col--;
+        while (row >= 0 && row < N) {
+          for (const c of [col, col - 1]) {
+            if (m[row][c] !== -1) continue;
+            const v = bit < total ? (out[bit >> 3] >> (7 - (bit & 7))) & 1 : 0;
+            cells.push([row, c, v]); bit++;
+            m[row][c] = 0;   // placeholder; real value set per mask
+          }
+          row += dir === -1 ? -1 : 1;
+        }
+        dir = -dir; row += dir === -1 ? -1 : 1;
+        row = Math.max(0, Math.min(N - 1, row));
+        row = dir === -1 ? N - 1 : 0;
+      }
+    }
+
+    // Try all 8 masks; score with the run-length penalty (rule 1 — the dominant one).
+    let best = null, bestScore = Infinity;
+    for (let mk = 0; mk < 8; mk++) {
+      const t = m.map(r => Int8Array.from(r));
+      for (const [r, c, v] of cells) t[r][c] = MASKS[mk](r, c) ? v ^ 1 : v;
+      const f = bch15((0b00 << 3) | mk);   // EC level M
+      // Format info, spec-exact placement (fb[0] = most significant bit):
+      const fb = []; for (let i = 14; i >= 0; i--) fb.push((f >> i) & 1);
+      // around top-left
+      t[8][0]=fb[0]; t[8][1]=fb[1]; t[8][2]=fb[2]; t[8][3]=fb[3]; t[8][4]=fb[4];
+      t[8][5]=fb[5]; t[8][7]=fb[6]; t[8][8]=fb[7]; t[7][8]=fb[8];
+      t[5][8]=fb[9]; t[4][8]=fb[10]; t[3][8]=fb[11]; t[2][8]=fb[12]; t[1][8]=fb[13]; t[0][8]=fb[14];
+      // split copy: below top-right + right of bottom-left
+      t[N-1][8]=fb[0]; t[N-2][8]=fb[1]; t[N-3][8]=fb[2]; t[N-4][8]=fb[3];
+      t[N-5][8]=fb[4]; t[N-6][8]=fb[5]; t[N-7][8]=fb[6];
+      t[8][N-8]=fb[7]; t[8][N-7]=fb[8]; t[8][N-6]=fb[9]; t[8][N-5]=fb[10];
+      t[8][N-4]=fb[11]; t[8][N-3]=fb[12]; t[8][N-2]=fb[13]; t[8][N-1]=fb[14];
+      if (version >= 7) {
+        const vi = bch18(version);
+        for (let i = 0; i < 18; i++) {
+          const b = (vi >> i) & 1;
+          t[(i / 3) | 0][N - 11 + (i % 3)] = b;
+          t[N - 11 + (i % 3)][(i / 3) | 0] = b;
+        }
+      }
+      // Penalty rule 1: rows and columns.
+      let score = 0;
+      const run = get => {
+        let s = 0;
+        for (let a = 0; a < N; a++) {
+          let last = -1, len = 0;
+          for (let b = 0; b < N; b++) {
+            const v = get(a, b);
+            if (v === last) len++;
+            else { if (len >= 5) s += 3 + (len - 5); last = v; len = 1; }
+          }
+          if (len >= 5) s += 3 + (len - 5);
+        }
+        return s;
+      };
+      score = run((a, b) => t[a][b]) + run((a, b) => t[b][a]);
+      if (score < bestScore) { bestScore = score; best = t; }
+    }
+    return best;
+  };
+})();
+
+/* ── UI wiring ─────────────────────────────────────────────────────────────── */
+const $ = id => document.getElementById(id);
+let proto = "rtsp";
+
+document.querySelectorAll("#proto button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("#proto button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  proto = b.dataset.p;
+  $("port").value = b.dataset.port;
+  $("credFields").style.display = proto === "srt" ? "none" : "";
+  $("srtFields").style.display  = proto === "srt" ? "" : "none";
+  render();
+}));
+["host", "port", "user", "pass", "passphrase"].forEach(id => $(id).addEventListener("input", render));
+$("showpass").addEventListener("change", () => { $("pass").type = $("showpass").checked ? "text" : "password"; });
+
+function buildUrl() {
+  const host = $("host").value.trim();
+  if (!host) return null;
+  if (/[\s/@:?#]/.test(host)) throw new Error("Server address should be a bare hostname or IP — no spaces, slashes, or port here.");
+  const port = parseInt($("port").value, 10);
+  if (!(port >= 1 && port <= 65535)) throw new Error("Port must be 1–65535.");
+  const user = $("user").value, pass = $("pass").value, phrase = $("passphrase").value;
+  // Server-only: no path and no name, so each device keeps its callsign-derived
+  // alias/stream path (see StreamUrlParser — absent means "keep what you have").
+  if (proto === "rtsp") {
+    let cred = "";
+    if (user) cred = encodeURIComponent(user) + (pass ? ":" + encodeURIComponent(pass) : "") + "@";
+    else if (pass) throw new Error("A password needs a username (RTSP puts both in the URL).");
+    return `rtsp://${cred}${host}:${port}`;
+  }
+  if (proto === "rtmp") {
+    const q = [];
+    if (user) q.push("user=" + encodeURIComponent(user));
+    if (pass) q.push("pass=" + encodeURIComponent(pass));
+    return `rtmp://${host}:${port}` + (q.length ? "?" + q.join("&") : "");
+  }
+  return `srt://${host}:${port}` + (phrase ? "?passphrase=" + encodeURIComponent(phrase) : "");
+}
+
+function render() {
+  const qrBox = $("qr"), urlBox = $("url"), errBox = $("err");
+  errBox.textContent = "";
+  let url = null;
+  try { url = buildUrl(); }
+  catch (e) { errBox.textContent = e.message; }
+  if (!url) { qrBox.innerHTML = ""; urlBox.textContent = "Enter a server address…"; return; }
+  urlBox.textContent = url;
+  try {
+    const matrix = qrEncode(url);
+    const n = matrix.length, cell = 4, quiet = 0;
+    let rects = "";
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++)
+      if (matrix[r][c] === 1) rects += `<rect x="${(c + quiet) * cell}" y="${(r + quiet) * cell}" width="${cell}" height="${cell}"/>`;
+    const size = (n + quiet * 2) * cell;
+    qrBox.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}"
+        shape-rendering="crispEdges" fill="#000">${rects}</svg>`;
+  } catch (e) {
+    qrBox.innerHTML = ""; errBox.textContent = e.message;
+  }
+}
+render();
+</script>
+</body>
+</html>

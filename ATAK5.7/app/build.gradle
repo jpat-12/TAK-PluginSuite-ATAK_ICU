@@ -1,0 +1,319 @@
+////////////////////////////////////////////////////////////////////////////////
+//
+// ATAK-ICU — ATAK plugin (Phase 0 scaffold)
+//
+// PLUGIN_VERSION is the common version name when describing the plugin.
+// ATAK_VERSION   is the version of ATAK this plugin is compatible with.
+//
+// Build config modeled on the QuickCapture plugin, retargeted to ATAK-CIV 5.7.0.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+buildscript {
+
+    ext.PLUGIN_VERSION = "3.1.1"
+    ext.ATAK_VERSION = '5.7.0'
+
+    def takdevVersion = '3.+'
+
+    def getValueFromPropertiesFile = { propFile, key ->
+        if(!propFile.isFile() || !propFile.canRead())
+            return null
+        def prop = new Properties()
+        def reader = propFile.newReader()
+        try {
+            prop.load(reader)
+        } finally {
+            reader.close()
+        }
+        return prop.get(key)
+    }
+
+    def getProperty = { name, defValue ->
+        def prop = project.properties[name] ?:
+                getValueFromPropertiesFile(project.rootProject.file('local.properties'), name)
+        return (null == prop) ? defValue : prop
+    }
+
+    def urlKey = 'takrepo.url'
+
+    ext.isDevKitEnabled = { ->
+        return getProperty(urlKey, null) != null
+    }
+
+    ext.takrepoUrl = getProperty(urlKey, 'https://localhost/')
+    ext.takrepoUser = getProperty('takrepo.user', 'invalid')
+    ext.takrepoPassword = getProperty('takrepo.password', 'invalid')
+    ext.takdevPlugin = getProperty('takdev.plugin', "${rootDir}/../../atak-gradle-takdev.jar")
+
+    repositories {
+        google()
+        mavenCentral()
+        mavenLocal()
+        maven { url "https://jitpack.io" }
+        maven {
+            url = takrepoUrl
+            credentials {
+                username = takrepoUser
+                password = takrepoPassword
+            }
+        }
+    }
+    dependencies {
+        if (isDevKitEnabled()) {
+            classpath "com.atakmap.gradle:atak-gradle-takdev:${takdevVersion}"
+        } else {
+            classpath files(takdevPlugin)
+        }
+    }
+}
+
+plugins {
+    id("com.android.application")
+}
+apply {
+    plugin("atak-takdev-plugin")
+}
+
+allprojects {
+    repositories {
+        mavenCentral()
+        google()
+        mavenLocal()
+        maven { url "https://jitpack.io" }
+    }
+}
+
+def supportedFlavors =
+[
+    [ name : 'civ', default: true ],
+    [ name : 'mil' ],
+    [ name : 'gov' ],
+]
+
+android {
+    compileSdk 36
+    namespace 'com.atakmap.android.icu.plugin'
+
+    // ATAK's TakHttpClient (used to POST video feeds to the TAK Server's Marti API)
+    // takes org.apache.http request objects, which live in this optional platform lib.
+    useLibrary 'org.apache.http.legacy'
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // required — otherwise the TAK inner signing check fails and the plugin won't load
+    bundle {
+        storeArchive {
+            enable = false
+        }
+    }
+
+    // required — otherwise the plugin cannot use native libraries
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
+    signingConfigs {
+        debug {
+            storeFile file("${buildDir}/android_keystore")
+            storePassword "tnttnt"
+            keyAlias "wintec_mapping"
+            keyPassword "tnttnt"
+        }
+        release {
+            storeFile file("${buildDir}/android_keystore")
+            storePassword "tnttnt"
+            keyAlias "wintec_mapping"
+            keyPassword "tnttnt"
+        }
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+            matchingFallbacks = ['sdk']
+        }
+        release {
+            minifyEnabled true
+            proguardFiles 'proguard-gradle.txt', 'proguard-gradle-repackage.txt'
+            signingConfig signingConfigs.release
+            matchingFallbacks = ['odk']
+        }
+    }
+
+    flavorDimensions "application"
+
+    productFlavors {
+        supportedFlavors.each { flav ->
+            "${flav.name}" {
+                getIsDefault().set(flav.default ?: false)
+                dimension "application"
+
+                if (!flav.name.equals("civ") && !flav.name.equals("mil")) {
+                    applicationIdSuffix = ".${flav.name}"
+                }
+                matchingFallbacks = ['civ']
+
+                def pluginApiFlavor = flav.name.equals('gov') ? 'CIV' : "${flav.name.toUpperCase()}"
+                manifestPlaceholders = [atakApiVersion: "com.atakmap.app@" + ATAK_VERSION + ".${pluginApiFlavor}"]
+            }
+        }
+        applicationVariants.all { variant ->
+            variant.resValue "string", "versionName", variant.versionName
+            buildConfigField 'String', 'ATAK_PACKAGE_NAME', '"com.atakmap.app.civ"'
+        }
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/INDEX.LIST']
+        }
+        jniLibs.useLegacyPackaging true
+    }
+
+    sourceSets {
+        main {
+            // Keep archive/version naming consistent with the wider plugin community.
+            setProperty("archivesBaseName", "ATAK-Plugin-" + rootProject.name + "-" + PLUGIN_VERSION + "-" + getVersionName() + "-" + ATAK_VERSION)
+            // versionCode derived from PLUGIN_VERSION (3.0.0 -> 30000), NOT takdev's
+            // getVersionCode(): that is git-derived, so every build from a source zip
+            // (tak.gov, and the archives this plugin actually ships from) falls back
+            // to versionCode 1 — and an MDM (Samsung Knox) then refuses the "upgrade"
+            // because 1 is not higher than the installed 1. Deriving from the version
+            // string is deterministic with or without git and always increases with a
+            // release. Room per part: major*10000 + minor*100 + patch (max .99).
+            def vparts = PLUGIN_VERSION.tokenize('.')
+            defaultConfig.versionCode = vparts[0].toInteger() * 10000 +
+                    (vparts.size() > 1 ? vparts[1].toInteger() : 0) * 100 +
+                    (vparts.size() > 2 ? vparts[2].toInteger() : 0)
+            defaultConfig.versionName = PLUGIN_VERSION + " (" + getVersionName() + ") - [" + ATAK_VERSION + "]"
+        }
+
+        debug.setRoot('build-types/debug')
+        release.setRoot('build-types/release')
+    }
+
+    defaultConfig {
+        minSdkVersion 21
+        targetSdkVersion 34
+
+        // The plugin bundles native code (UVC capture, libwebrtc), so these filters now
+        // decide which devices can install it at all — an APK whose native libs don't match
+        // the device is rejected with INSTALL_FAILED_NO_MATCHING_ABIS. Keep both branches in
+        // step; they drifted apart during the P2P spike and left releases arm64-only.
+        //   armeabi-v7a  32-bit ARM — older/rugged EUDs
+        //   arm64-v8a    every current handset
+        //   x86, x86_64  emulators (x86_64 is what modern AVDs use)
+        def abis = ["armeabi-v7a", "arm64-v8a", "x86", "x86_64"]
+        def runTasks = gradle.startParameter.taskNames
+        if(runTasks.toString().contains('bundle')) {
+            ndk {
+                abiFilters(*abis)
+            }
+        } else {
+            ndk {
+                abiFilters(*abis)
+            }
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+afterEvaluate {
+    // Stage the SDK signing keystore into the build dir. The takdev plugin normally
+    // does this, but its offline fallback does not — so copy it ourselves if missing.
+    def sdkPath = project.hasProperty('sdk.path') ? project.property('sdk.path') : null
+    if (sdkPath == null) {
+        def lp = rootProject.file('local.properties')
+        if (lp.isFile()) {
+            def p = new Properties(); lp.withReader { p.load(it) }
+            sdkPath = p.getProperty('sdk.path')
+        }
+    }
+    if (sdkPath != null) {
+        def ks = new File(sdkPath, 'android_keystore')
+        def dest = new File("${buildDir}/android_keystore")
+        if (ks.exists()) {
+            dest.parentFile.mkdirs()
+            if (!dest.exists()) dest.bytes = ks.bytes
+        }
+    }
+
+    // Empty ProGuard mapping fallback so release ProGuard doesn't abort if the SDK
+    // mapping path was not provided by the takdev plugin.
+    if (!System.properties.containsKey('atak.proguard.mapping')) {
+        def emptyMapping = new File("${buildDir}/takdev-mapping-fallback.txt")
+        emptyMapping.parentFile.mkdirs()
+        if (!emptyMapping.exists()) emptyMapping.text = ''
+        System.setProperty('atak.proguard.mapping', emptyMapping.absolutePath)
+    }
+
+    project.file('proguard-gradle-repackage.txt').text = "-repackageclasses atakplugin.${rootProject.getName()}"
+}
+
+dependencies {
+    // main.jar is the ATAK SDK — compileOnly because ATAK provides it at runtime.
+    compileOnly fileTree(dir: 'libs', include: ['main.jar'])
+    implementation fileTree(dir: 'libs', include: '*.jar', excludes: ['main.jar'])
+
+    // QR decoding for the settings-page "Scan QR" button (ui/qr/QrScanDialog).
+    // Pure-Java core only — no zxing-android-embedded — the scan UI is our own
+    // Camera2 TextureView, matching how capture/CameraSource already works.
+    implementation 'com.google.zxing:core:3.5.3'
+
+    // WebRTC (libwebrtc) for the reliable P2P transport — ICE/STUN/TURN NAT traversal.
+    // Bundles a native .so; Phase 0 spike confirms it loads inside ATAK's plugin process.
+    implementation 'io.github.webrtc-sdk:android:125.6422.07'
+
+    // UVC (USB webcam) capture — non-rooted USB-host driver so a plugged-in USB camera
+    // (e.g. a helmet cam) can be used as the video source alongside the phone's own
+    // Camera2 devices. Bundles a native .so (libusb/libuvc).
+    //
+    // legacy-support-v4/appcompat are excluded: the library's build.gradle lists them but
+    // its actual camera code (libuvccamera module) never imports androidx.appcompat/core —
+    // only its demo app does — so they're dead weight here. They also conflict with this
+    // project's global androidx.core exclude below (ATAK's host process already provides
+    // androidx.core; a bundled second copy breaks resource linking), which appcompat's own
+    // resources need to compile against.
+    implementation('com.herohan:UVCAndroid:1.0.13') {
+        exclude group: 'androidx.legacy', module: 'legacy-support-v4'
+        exclude group: 'androidx.appcompat', module: 'appcompat'
+    }
+
+    testImplementation 'junit:junit:4.13.2'
+}
+
+configurations.all {
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == 'androidx.core' && !details.requested.name.contains('core-viewtree')) {
+            details.useVersion "1.17.0"
+        }
+        if (details.requested.group == 'androidx.lifecycle') {
+            details.useVersion "2.9.4"
+        }
+        if (details.requested.group == 'androidx.fragment') {
+            details.useVersion "1.8.9"
+        }
+    }
+}
+
+configurations.implementation {
+    exclude group: 'androidx.core', module: 'core-ktx'
+    exclude group: 'androidx.core', module: 'core'
+    exclude group: 'androidx.fragment', module: 'fragment'
+    exclude group: 'androidx.lifecycle', module: 'lifecycle'
+    exclude group: 'androidx.lifecycle', module: 'lifecycle-process'
+}

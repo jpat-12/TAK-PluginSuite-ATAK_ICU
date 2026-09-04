@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" font-family="Franklin Gothic Book, Franklin Gothic, Arial, Helvetica, sans-serif">
+  <title>TAK-PluginSuite-ICU: capture to CoT flow</title>
+
+  <defs>
+    <!-- Parsons Brand Colors 2020 -->
+    <style>
+      .h1   { font-family: 'Franklin Gothic Demi','Franklin Gothic',Arial,sans-serif; font-size: 34px; fill: #081931; }
+      .sub  { font-size: 17px; fill: #505050; }
+      .lane { font-family: 'Franklin Gothic Demi','Franklin Gothic',Arial,sans-serif; font-size: 15px; fill: #FFFFFF; letter-spacing: .06em; }
+      .node { font-family: 'Franklin Gothic Demi','Franklin Gothic',Arial,sans-serif; font-size: 17px; fill: #081931; }
+      .det  { font-size: 14px; fill: #505050; }
+      .deti { font-size: 14px; fill: #DFDFDF; }
+      .noded{ font-family: 'Franklin Gothic Demi','Franklin Gothic',Arial,sans-serif; font-size: 17px; fill: #FFFFFF; }
+      .step { font-family: 'Franklin Gothic Demi','Franklin Gothic',Arial,sans-serif; font-size: 13px; fill: #959595; letter-spacing: .12em; }
+      .edge { font-size: 13px; fill: #505050; }
+    </style>
+
+    <marker id="aCyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#00AEE6"/>
+    </marker>
+    <marker id="aBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0052CC"/>
+    </marker>
+    <marker id="aGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#097538"/>
+    </marker>
+    <marker id="aNavy" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1B3349"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1600" height="900" fill="#FFFFFF"/>
+
+  <!-- ── Title ─────────────────────────────────────────────────────────── -->
+  <rect x="60" y="44" width="6" height="46" fill="#00AEE6"/>
+  <text class="h1" x="84" y="70">TAK-PluginSuite-ICU</text>
+  <text class="sub" x="84" y="96">Device camera to live map video: two independent plugins, one shared TAK delivery path</text>
+
+  <!-- ── Column headers ────────────────────────────────────────────────── -->
+  <text class="step" x="150" y="146" text-anchor="middle">CAPTURE</text>
+  <text class="step" x="470" y="146" text-anchor="middle">ENCODE</text>
+  <text class="step" x="790" y="146" text-anchor="middle">TRANSPORT</text>
+  <text class="step" x="1110" y="146" text-anchor="middle">DELIVERY</text>
+  <text class="step" x="1430" y="146" text-anchor="middle">CONSUMERS</text>
+  <line x1="60" y1="158" x2="1540" y2="158" stroke="#DFDFDF" stroke-width="2"/>
+
+  <!-- ══ ATAK-ICU lane ═════════════════════════════════════════════════ -->
+  <rect x="60" y="180" width="1160" height="182" rx="8" fill="#00AEE6" fill-opacity="0.06" stroke="#9ED9FD" stroke-width="1.5"/>
+  <rect x="60" y="180" width="196" height="28" rx="8" fill="#00AEE6"/>
+  <text class="lane" x="76" y="199">ATAK-ICU · ANDROID</text>
+
+  <!-- capture -->
+  <rect x="80" y="226" width="180" height="112" rx="6" fill="#FFFFFF" stroke="#00AEE6" stroke-width="2.5"/>
+  <text class="node" x="170" y="262" text-anchor="middle">Camera2</text>
+  <text class="det"  x="170" y="286" text-anchor="middle">built-in camera or</text>
+  <text class="det"  x="170" y="304" text-anchor="middle">UVC / USB webcam</text>
+  <text class="det"  x="170" y="322" text-anchor="middle">GL rotation pipe</text>
+
+  <!-- encode -->
+  <rect x="400" y="226" width="180" height="112" rx="6" fill="#FFFFFF" stroke="#00AEE6" stroke-width="2.5"/>
+  <text class="node" x="490" y="262" text-anchor="middle">MediaCodec</text>
+  <text class="det"  x="490" y="286" text-anchor="middle">H.264 hardware</text>
+  <text class="det"  x="490" y="304" text-anchor="middle">+ AAC audio</text>
+  <text class="det"  x="490" y="322" text-anchor="middle">+ KLV telemetry</text>
+
+  <!-- transport -->
+  <rect x="720" y="226" width="180" height="112" rx="6" fill="#FFFFFF" stroke="#00AEE6" stroke-width="2.5"/>
+  <text class="node" x="810" y="262" text-anchor="middle">TransportManager</text>
+  <text class="det"  x="810" y="286" text-anchor="middle">on-device RTSP</text>
+  <text class="det"  x="810" y="304" text-anchor="middle">RTSP / RTMP push</text>
+  <text class="det"  x="810" y="322" text-anchor="middle">SRT (planned)</text>
+
+  <!-- arrows within ATAK lane -->
+  <line x1="264" y1="282" x2="392" y2="282" stroke="#00AEE6" stroke-width="2.5" marker-end="url(#aCyan)"/>
+  <line x1="584" y1="282" x2="712" y2="282" stroke="#00AEE6" stroke-width="2.5" marker-end="url(#aCyan)"/>
+
+  <!-- ══ WinTAK-ICU lane ═══════════════════════════════════════════════ -->
+  <rect x="60" y="392" width="1160" height="182" rx="8" fill="#0052CC" fill-opacity="0.06" stroke="#0052CC" stroke-opacity="0.35" stroke-width="1.5"/>
+  <rect x="60" y="392" width="212" height="28" rx="8" fill="#0052CC"/>
+  <text class="lane" x="76" y="411">WinTAK-ICU · WINDOWS</text>
+
+  <rect x="80" y="438" width="180" height="112" rx="6" fill="#FFFFFF" stroke="#0052CC" stroke-width="2.5"/>
+  <text class="node" x="170" y="474" text-anchor="middle">DirectShow</text>
+  <text class="det"  x="170" y="498" text-anchor="middle">USB camera</text>
+  <text class="det"  x="170" y="516" text-anchor="middle">or screen share</text>
+
+  <rect x="400" y="438" width="180" height="112" rx="6" fill="#FFFFFF" stroke="#0052CC" stroke-width="2.5"/>
+  <text class="node" x="490" y="474" text-anchor="middle">FFmpeg</text>
+  <text class="det"  x="490" y="498" text-anchor="middle">H.264 encode</text>
+  <text class="det"  x="490" y="516" text-anchor="middle">+ KLV in MPEG-TS</text>
+
+  <rect x="720" y="438" width="180" height="112" rx="6" fill="#FFFFFF" stroke="#0052CC" stroke-width="2.5"/>
+  <text class="node" x="810" y="474" text-anchor="middle">FFmpeg muxer</text>
+  <text class="det"  x="810" y="498" text-anchor="middle">RTMP/RTMPS, RTSP/S</text>
+  <text class="det"  x="810" y="516" text-anchor="middle">SRT, UDP</text>
+
+  <line x1="264" y1="494" x2="392" y2="494" stroke="#0052CC" stroke-width="2.5" marker-end="url(#aBlue)"/>
+  <line x1="584" y1="494" x2="712" y2="494" stroke="#0052CC" stroke-width="2.5" marker-end="url(#aBlue)"/>
+
+  <!-- ══ Delivery ══════════════════════════════════════════════════════ -->
+  <rect x="1040" y="226" width="180" height="112" rx="6" fill="#081931" stroke="#081931" stroke-width="2.5"/>
+  <text class="noded" x="1130" y="266" text-anchor="middle">LAN / mesh</text>
+  <text class="deti"  x="1130" y="290" text-anchor="middle">viewers pull the</text>
+  <text class="deti"  x="1130" y="308" text-anchor="middle">on-device RTSP URL</text>
+
+  <rect x="1040" y="438" width="180" height="112" rx="6" fill="#1B3349" stroke="#1B3349" stroke-width="2.5"/>
+  <text class="noded" x="1130" y="470" text-anchor="middle">Media server</text>
+  <text class="deti"  x="1130" y="494" text-anchor="middle">MediaMTX /</text>
+  <text class="deti"  x="1130" y="512" text-anchor="middle">TAK Restreamer</text>
+  <text class="deti"  x="1130" y="530" text-anchor="middle">fan-out to many</text>
+
+  <!-- transport -> delivery -->
+  <line x1="904" y1="266" x2="1032" y2="266" stroke="#00AEE6" stroke-width="2.5" marker-end="url(#aCyan)"/>
+  <path d="M904,304 C980,304 980,462 1032,462" fill="none" stroke="#00AEE6" stroke-width="2.5" marker-end="url(#aCyan)"/>
+  <line x1="904" y1="494" x2="1032" y2="494" stroke="#0052CC" stroke-width="2.5" marker-end="url(#aBlue)"/>
+  <text class="edge" x="968" y="256" text-anchor="middle">direct</text>
+  <text class="edge" x="968" y="484" text-anchor="middle">push</text>
+
+  <!-- ══ Consumers ═════════════════════════════════════════════════════ -->
+  <rect x="1330" y="300" width="200" height="176" rx="6" fill="#FFFFFF" stroke="#081931" stroke-width="2.5"/>
+  <text class="node" x="1430" y="342" text-anchor="middle">Other TAK clients</text>
+  <text class="det"  x="1430" y="372" text-anchor="middle">ATAK · WinTAK</text>
+  <text class="det"  x="1430" y="392" text-anchor="middle">iTAK · WebTAK</text>
+  <line x1="1360" y1="410" x2="1500" y2="410" stroke="#DFDFDF" stroke-width="2"/>
+  <text class="det"  x="1430" y="436" text-anchor="middle">tap the marker,</text>
+  <text class="det"  x="1430" y="456" text-anchor="middle">video opens</text>
+
+  <path d="M1224,282 C1290,282 1290,340 1322,340" fill="none" stroke="#1B3349" stroke-width="2.5" marker-end="url(#aNavy)"/>
+  <path d="M1224,494 C1290,494 1290,436 1322,436" fill="none" stroke="#1B3349" stroke-width="2.5" marker-end="url(#aNavy)"/>
+
+  <!-- ══ CoT signalling band ═══════════════════════════════════════════ -->
+  <rect x="60" y="620" width="1470" height="228" rx="8" fill="#50BF34" fill-opacity="0.07" stroke="#50BF34" stroke-opacity="0.45" stroke-width="1.5"/>
+  <rect x="60" y="620" width="376" height="28" rx="8" fill="#097538"/>
+  <text class="lane" x="76" y="639">CoT SIGNALLING · HOW VIEWERS FIND THE FEED</text>
+
+  <rect x="80" y="664" width="310" height="76" rx="6" fill="#FFFFFF" stroke="#00AEE6" stroke-width="2.5"/>
+  <text class="node" x="106" y="692">ATAK-ICU</text>
+  <text class="det"  x="106" y="714">self-marker becomes a sensor with</text>
+  <text class="det"  x="106" y="732">FOV cone; &lt;__video&gt; detail holds the URL</text>
+
+  <rect x="80" y="756" width="310" height="76" rx="6" fill="#FFFFFF" stroke="#0052CC" stroke-width="2.5"/>
+  <text class="node" x="106" y="784">WinTAK-ICU</text>
+  <text class="det"  x="106" y="806">b-i-v video event, GPS-linked position,</text>
+  <text class="det"  x="106" y="824">optional OpenTAK Server registration</text>
+
+  <rect x="600" y="696" width="250" height="104" rx="6" fill="#097538" stroke="#097538" stroke-width="2.5"/>
+  <text class="noded" x="725" y="730" text-anchor="middle">TAK Server</text>
+  <text class="noded" x="725" y="752" text-anchor="middle">or mesh</text>
+  <text class="deti"  x="725" y="778" text-anchor="middle">existing client connection,</text>
+  <text class="deti"  x="725" y="794" text-anchor="middle">no extra port to open</text>
+
+  <rect x="1010" y="696" width="290" height="104" rx="6" fill="#FFFFFF" stroke="#097538" stroke-width="2.5"/>
+  <text class="node" x="1155" y="730" text-anchor="middle">Marker appears</text>
+  <text class="node" x="1155" y="752" text-anchor="middle">on every map</text>
+  <text class="det"  x="1155" y="778" text-anchor="middle">stream URL rides along,</text>
+  <text class="det"  x="1155" y="794" text-anchor="middle">so playback is one tap</text>
+
+  <path d="M394,702 C500,702 500,730 592,730" fill="none" stroke="#097538" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#aGreen)"/>
+  <path d="M394,794 C500,794 500,768 592,768" fill="none" stroke="#097538" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#aGreen)"/>
+  <line x1="854" y1="748" x2="1002" y2="748" stroke="#097538" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#aGreen)"/>
+
+  <!-- the marker is what the consumers on the right actually tap -->
+  <path d="M1300,724 C1400,724 1430,620 1430,486" fill="none" stroke="#1B3349" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#aNavy)"/>
+
+  <!-- ══ Footnote ══════════════════════════════════════════════════════ -->
+  <text class="det" x="60" y="874">Solid arrows carry video. Dashed arrows carry CoT signalling. The two plugins share no code: each uses its own platform primitives.</text>
+</svg>

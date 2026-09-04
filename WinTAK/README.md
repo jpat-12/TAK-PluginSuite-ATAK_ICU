@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="assets/ic_launcher.png" width="120" alt="ICU VideoStreamer"/>
+  <img src="assets/ic_launcher.png" width="120" alt="WinTAK-ICU"/>
 </p>
 
-# ICU VideoStreamer — WinTAK Plugin
+# WinTAK-ICU — WinTAK Plugin
 
-Part of the TAK-PluginSuite-ICU_VideoStreamer suite. A WinTAK plugin for live video streaming with automatic CoT video announcement, GPS-linked position, and OpenTAK Server integration.
+Part of the TAK-PluginSuite-ICU suite. A WinTAK plugin for live video streaming with automatic CoT video announcement, GPS-linked position, and OpenTAK Server integration.
 
 ## Features
 

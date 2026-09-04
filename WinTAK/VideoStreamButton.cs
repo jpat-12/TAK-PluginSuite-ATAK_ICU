@@ -5,7 +5,7 @@ using WinTak.Framework.Tools.Attributes;
 
 namespace ICUVideoStreamer
 {
-    [Button("ICUVideoStreamer_VideoStreamButton", "ICU VideoStreamer",
+    [Button("ICUVideoStreamer_VideoStreamButton", "WinTAK-ICU",
         LargeImage = "pack://application:,,,/ICUVideoStreamer;component/assets/ic_launcher.png",
         SmallImage = "pack://application:,,,/ICUVideoStreamer;component/assets/ic_launcher.png",
         Tab        = "Home",

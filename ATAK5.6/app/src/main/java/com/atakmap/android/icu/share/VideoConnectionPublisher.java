@@ -53,7 +53,7 @@ public final class VideoConnectionPublisher {
                 }
 
                 ConnectionEntry ce = new ConnectionEntry(
-                        cfg.alias == null || cfg.alias.trim().isEmpty() ? "ICU VideoStreamer" : cfg.alias.trim(),
+                        cfg.alias == null || cfg.alias.trim().isEmpty() ? "ATAK-ICU" : cfg.alias.trim(),
                         cfg.feedViewUrl());      // 2-arg ctor parses address/port/path/protocol;
                                                  // feedViewUrl embeds user:pass@ + ?tcp for viewers
                 ce.setUID(uuid);

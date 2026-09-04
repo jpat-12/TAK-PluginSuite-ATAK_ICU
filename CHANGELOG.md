@@ -1,5 +1,195 @@
 # Changelog
 
+## 3.1.1 — 2026-08-27
+
+### ATAK-ICU 5.7 tree
+- Fixed: with a network camera on the LAN destination, the self-marker video
+  detail advertised the phone's re-served copy, so the video crossed the radio
+  mesh twice (camera→phone, phone→viewer) plus a re-encode — receiving EUDs saw
+  the stream cut in and out. The camera's own RTSP URL is advertised instead;
+  viewers pull one mesh hop straight from the source. (Each direct viewer opens
+  its own session on the camera — large viewer counts belong on the re-served
+  copy or the Server destination.) Server mode is unchanged.
+
+## 3.1.0 — 2026-08-26
+
+### ATAK-ICU 5.7 tree
+- **Network (IP) cameras as a capture source.** "Network camera (RTSP)" joins the
+  camera picker: the plugin pulls the camera's H.264 stream (RTSP, TCP-interleaved —
+  one TCP flow, the right shape for a radio mesh), decodes it, and feeds it through
+  the same GL/encoder pipeline as the built-in cameras — so per-destination profiles,
+  quality settings, HQ recording, FOV, and both LAN/Server destinations all apply to
+  a remote camera unchanged. Field-verified against a MOHOC behind a Silvus 4200
+  (camera on a different /24 across the mesh). Credentials ride the URL
+  (`rtsp://user:pass@…`); camera audio is ignored (phone mic remains the audio
+  source); H.264 only.
+- **Camera auto-discovery.** A "Find camera on network" button resolves the URL so
+  it doesn't have to be hand-typed: ONVIF WS-Discovery + SSDP multicast probes (cross
+  subnets on a bridged mesh), a port-554 sweep of the local /24, and a DESCRIBE sweep
+  of ~17 known vendor paths per discovered host. Typing just an IP and tapping Find
+  resolves the full URL too; auth-protected cameras are reported with a prompt.
+- **Persistent diagnostic log** at `<atak>/ICU Video/logs/icu-diag.log` (512 KB cap,
+  one rotation): broadcast start/stop, every RTSP exchange with response codes,
+  decoder configs, timeouts. Diagnosable field runs with no adb attached — which is
+  the norm when the phone's USB port is feeding an ethernet radio.
+- Fixed: restarting a network-camera broadcast failed with "SETUP failed: 501" — the
+  RTSP client reused the previous run's Session id on the new connection (and the
+  camera refused the stale session); per-session state now fully resets, and stop
+  sends a proper TEARDOWN.
+
+## 3.0.0 — 2026-08-25
+
+### ATAK-ICU 5.7 tree
+- **Per-destination camera settings.** LAN and Media Server each keep their own
+  persistent capture/encode profile (resolution, fps, bitrate, camera, rotation,
+  keyframe interval, mic audio); the settings dialog swaps the VIDEO fields as
+  the Destination picker flips, and an upgrade seeds both profiles from the old
+  flat settings.
+- **Quick-bar rework.** Broadcast / Record / LAN⇄Server toggle / Blackout. The
+  toggle flips destination in one tap (restarting a live stream onto the new
+  destination); snapshot moved to the self-marker radial only. Buttons resized
+  so all four fit a 1080p phone.
+- **Record at a different quality than the stream.** New "Record resolution" /
+  "Record frame rate" settings spin up a second on-demand H.264 encoder — e.g.
+  stream 720p15 over a constrained link while the local file gets 1080p30.
+  Device-verified: 960x720@15 stream alongside a 1440x1080@30 / 4.4 Mbps file.
+- **Recordings moved to `<internal storage>/atak/ICU Video`** so they're
+  visible to normal file browsers.
+- **"Auto — match ATAK" orientation** (new default): capture rotation follows
+  the host's display orientation, including ATAK's force-portrait/landscape
+  setting; a mid-broadcast flip restarts the stream in the new orientation.
+- **Map status badge is actually tappable**: hit box widened past the icon
+  bitmap and across the dot/LIVE label; overlay widgets no longer swallow taps.
+- **tools/icu-qr-generator.html** — offline, self-contained page that generates
+  the server-provisioning QR (server/port/credentials only; every device keeps
+  its callsign-derived alias and stream path).
+
+### ATAK-ICU features (both 5.6 and 5.7 trees)
+- **The broadcast survives a network change.** Switching Wi-Fi to LTE, or hopping
+  between APs, used to end the stream permanently and say nothing: the outbound
+  socket is bound to an address the device no longer owns, TCP has no idea its
+  interface went away, and neither push transport had any reconnect path. The
+  encoder kept running, the transports kept writing into dead sockets, and the
+  pane kept reporting `LIVE` while no viewer received anything.
+  - A new `util/NetworkMonitor` watches the default network via
+    `ConnectivityManager` and reports real moves, debounced by 1.5s so the churn
+    of a handover doesn't trigger a dial over a network that is about to be
+    replaced.
+  - Both push transports now redial on an exponential backoff (1s doubling to a
+    15s cap, 8 attempts, roughly a minute of grace) and only report a terminal
+    `failureReason` once they give up. The attempt count resets whenever the
+    network moves again. RTSP auth failures still fail fast, since a rejected
+    credential will be rejected identically on every retry.
+  - Redials also cover a connection lost without a network change, e.g. the media
+    server restarting. `RtmpPublisher` and `RtspPusher` now record *why* a write
+    failed instead of silently closing, and the transports poll that to trigger a
+    dial rather than dropping frames for the rest of the broadcast.
+  - The pane shows `Reconnecting…` with the live dot off during the gap, instead
+    of a confident `LIVE` over a connection that does not exist.
+  - On LAN the advertised URL embeds the device's own IP, which the change
+    invalidates. It is now re-derived and pushed out on the self marker via
+    `SelfMarkerFov.setUrl`, so peers get a working link within one FOV refresh.
+- **Known limitation:** viewers already connected over the old interface still
+  have to reconnect themselves. That half of the connection is theirs, and
+  nothing on the broadcasting side can repair it.
+- **Local MP4 recording.** The Record button now works: it muxes the broadcast's
+  own encoded H.264 (plus the AAC track when mic audio is on) into
+  `ATAK ICU/recordings/ICU_<timestamp>.mp4` under ATAK's external files directory. It
+  attaches to the running capture pipeline as a second sink rather than opening a
+  second camera/encoder, so recording costs nothing beyond the mux and the file
+  matches what viewers saw frame-for-frame. Consequences, by design: recording
+  requires an active broadcast, it starts at the first keyframe after the tap (up
+  to one GOP later — MP4 can't open mid-GOP), and stopping or reconfiguring the
+  broadcast finalizes the file. The button shows a live `REC m:ss` elapsed readout
+  and turns red while recording.
+- **Blackout button in the operator pane**, next to Broadcast / Record / Snapshot.
+  Previously blackout was reachable only from the self-marker radial's **BLK/OUT**
+  button; it now sits in the pane's quick-action rail as well. Same behavior: the
+  screen is painted black at minimum brightness with the app still foreground, so
+  capture keeps running, and a tap anywhere wakes it.
+
+### ATAK-CIV 5.7 target
+- **New `ATAK5.7/` tree** — ATAK-ICU 2.5.0 ported to the ATAK-CIV 5.7.0.7 SDK.
+  `ATAK5.6/` is left in place, still building against 5.6.0. Both `civDebug` and
+  `civRelease` build clean on 5.7; runtime behavior is unverified on a 5.7 device.
+- **`ConnectionEntry` moved packages.** 5.7 drops the
+  `com.atakmap.android.video.ConnectionEntry` shim; `share/VideoConnectionPublisher`
+  now imports `gov.tak.api.video.ConnectionEntry`. This was the only source change
+  the SDK bump required.
+- Gradle wrapper 8.13 → 8.14.3, matching the 5.7 SDK samples. AGP 8.13.0,
+  `compileSdk 36`, Java 17, `minSdk 21` / `targetSdk 34` all unchanged.
+- `sdk.path` for 5.7 must point at the **inner** nested SDK directory; see
+  `ATAK5.7/local.properties.example`.
+
+## 2.5.0 — 2026-08-06
+
+USB camera support, in-band KLV telemetry, and a set of capture fixes — two of
+which were silently degrading every stream.
+
+### Capture sources
+- **USB / UVC webcams as a video source.** A plugged-in USB camera can now feed
+  the encoder, via a non-rooted USB-host driver (`com.herohan:UVCAndroid`), for
+  the common case where Android doesn't surface the device through Camera2 at all.
+- **External cameras auto-detected in the picker** when the OS *does* expose them
+  through Camera2 as `LENS_FACING_EXTERNAL`.
+- **Automatic fallback to the built-in camera** when a USB source never appears,
+  loses permission, or is unplugged mid-stream — the broadcast keeps running
+  instead of ending. A feed watchdog also covers the silent case where a UVC
+  device accepts `startPreview` and then delivers no frames, which raises no error.
+
+### TAK / CoT integration
+- **MISB ST 0601 KLV telemetry** (position, heading, real IMU pitch/roll, FOV)
+  emitted at 1 Hz on its own RTP track, mirroring the WinTAK `KlvService` cadence.
+  Carried on the LAN RTSP transport as `trackID=1`; players that only set up the
+  video track are unaffected.
+
+### Fixes
+- **The stream no longer loses field of view.** Capture-size selection could fall
+  back to 16:9 on any failure, with nothing logged, so on a 4:3 sensor every
+  viewer received a vertically cropped frame and the fallback was
+  indistinguishable from a correct choice. The full-FOV aspect is now derived
+  from the camera itself and resolution is purely a height budget.
+- **The preview now matches what's broadcast.** The preview surface was left at
+  the pane's shape, so Camera2 center-cropped it and the operator saw a narrower
+  view than viewers did.
+- **KLV telemetry actually sends.** Every packet was being dropped by
+  `NetworkOnMainThreadException` — the 1 Hz emitter ran its socket write on the
+  UI thread.
+- **Switching cameras while live works.** `CameraDevice.close()` is asynchronous,
+  so the restart reopened before the previous device had released.
+- **Preview no longer freezes** when the capture session is rebuilt while an
+  earlier configuration is still in flight.
+
+### Housekeeping
+- **ABI filters restored and unified** — `armeabi-v7a`, `arm64-v8a`, `x86`,
+  `x86_64`. Now that the plugin ships native code, these decide which devices can
+  install it; the APK path had drifted to arm64-only during the P2P spike.
+- **R8 keep rules for `org.webrtc`.** Its native code resolves classes by literal
+  name through JNI, so minification renaming them aborts the host process with
+  `SIGABRT` rather than throwing.
+- The Phase 0 WebRTC probe is debug-only. It confirmed libwebrtc loads inside
+  ATAK's plugin classloader and `PeerConnectionFactory` constructs.
+
+## 2.4.0 — 2026-07-31
+
+### Streaming & encoding
+- **Stream rotation is now baked into the encoded pixels** via a GL stage between
+  camera and encoder — raw H.264 over RTSP carries no rotation metadata, so
+  viewers previously saw the wrong orientation.
+- **Optional microphone audio** as a second AAC RTP track.
+- **Native-aspect capture** so the stream isn't forced to 16:9.
+- Audio on by default.
+
+### TAK / CoT integration
+- **FOV wedge range is configurable** (default 100 m).
+- FOV clears on stop.
+
+## 2.3.9 — 2026-07-28
+
+### Fixes
+- **Fixed an RTSP publish drop.**
+- Added auth status reporting, feed credentials, and connection diagnostics.
+
 ## 2.2.8 — 2026-07-25
 
 This release consolidates the 1.4.x → 2.2.x line: the plugin gained full

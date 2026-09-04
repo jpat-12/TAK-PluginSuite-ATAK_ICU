@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
-// ICU VideoStreamer — ATAK plugin (Phase 0 scaffold)
+// ATAK-ICU — ATAK plugin (Phase 0 scaffold)
 //
 // PLUGIN_VERSION is the common version name when describing the plugin.
 // ATAK_VERSION   is the version of ATAK this plugin is compatible with.
@@ -11,7 +11,7 @@
 
 buildscript {
 
-    ext.PLUGIN_VERSION = "2.4.0"
+    ext.PLUGIN_VERSION = "2.5.2"
     ext.ATAK_VERSION = '5.6.0'
 
     def takdevVersion = '3.+'
@@ -196,14 +196,22 @@ android {
         minSdkVersion 21
         targetSdkVersion 34
 
+        // The plugin bundles native code (UVC capture, libwebrtc), so these filters now
+        // decide which devices can install it at all — an APK whose native libs don't match
+        // the device is rejected with INSTALL_FAILED_NO_MATCHING_ABIS. Keep both branches in
+        // step; they drifted apart during the P2P spike and left releases arm64-only.
+        //   armeabi-v7a  32-bit ARM — older/rugged EUDs
+        //   arm64-v8a    every current handset
+        //   x86, x86_64  emulators (x86_64 is what modern AVDs use)
+        def abis = ["armeabi-v7a", "arm64-v8a", "x86", "x86_64"]
         def runTasks = gradle.startParameter.taskNames
         if(runTasks.toString().contains('bundle')) {
             ndk {
-                abiFilters "armeabi-v7a", "arm64-v8a"
+                abiFilters(*abis)
             }
         } else {
             ndk {
-                abiFilters "armeabi-v7a", "arm64-v8a", "x86"
+                abiFilters(*abis)
             }
         }
     }
@@ -255,6 +263,25 @@ dependencies {
     // Pure-Java core only — no zxing-android-embedded — the scan UI is our own
     // Camera2 TextureView, matching how capture/CameraSource already works.
     implementation 'com.google.zxing:core:3.5.3'
+
+    // WebRTC (libwebrtc) for the reliable P2P transport — ICE/STUN/TURN NAT traversal.
+    // Bundles a native .so; Phase 0 spike confirms it loads inside ATAK's plugin process.
+    implementation 'io.github.webrtc-sdk:android:125.6422.07'
+
+    // UVC (USB webcam) capture — non-rooted USB-host driver so a plugged-in USB camera
+    // (e.g. a helmet cam) can be used as the video source alongside the phone's own
+    // Camera2 devices. Bundles a native .so (libusb/libuvc).
+    //
+    // legacy-support-v4/appcompat are excluded: the library's build.gradle lists them but
+    // its actual camera code (libuvccamera module) never imports androidx.appcompat/core —
+    // only its demo app does — so they're dead weight here. They also conflict with this
+    // project's global androidx.core exclude below (ATAK's host process already provides
+    // androidx.core; a bundled second copy breaks resource linking), which appcompat's own
+    // resources need to compile against.
+    implementation('com.herohan:UVCAndroid:1.0.13') {
+        exclude group: 'androidx.legacy', module: 'legacy-support-v4'
+        exclude group: 'androidx.appcompat', module: 'appcompat'
+    }
 
     testImplementation 'junit:junit:4.13.2'
 }

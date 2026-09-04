@@ -1,4 +1,4 @@
-# ICU VideoStreamer — ATAK Plugin
+# ATAK-ICU — ATAK Plugin
 
 Streams the **phone's own camera** into ATAK and **broadcasts** it to other users
 over the local network / mesh — mirroring the UAS Tool drone-video experience, with
