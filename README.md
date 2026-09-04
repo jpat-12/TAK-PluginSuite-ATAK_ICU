@@ -1,4 +1,4 @@
-# TAK-PluginSuite-ICU
+# TAK-PluginSuite-ATAK_ICU
 
 Turns a TAK end-user device's **own camera** into a live video source for the map —
 broadcasting it to other users over the LAN/mesh or through a media server — instead
