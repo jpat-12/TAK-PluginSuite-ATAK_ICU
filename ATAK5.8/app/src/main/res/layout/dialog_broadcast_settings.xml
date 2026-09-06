@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Broadcast settings — mirrors the TAK ICU app: alias, destination, server,
+     credentials, and encoding preferences. Choice fields are Buttons that open a
+     picker built from the ATAK activity context (spinners crash under a plugin
+     window token). -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="14dp">
+
+        <TextView style="@style/IcuLabel" android:text="@string/icu_alias" />
+        <EditText android:id="@+id/set_alias"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:inputType="text" android:hint="VIDEO_1" />
+
+        <TextView style="@style/IcuLabel" android:text="@string/icu_destination" />
+        <Button android:id="@+id/set_destination"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <!-- Server group (visible only for SERVER destination) -->
+        <LinearLayout android:id="@+id/set_server_group"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView style="@style/IcuLabel" android:text="@string/icu_address" />
+            <EditText android:id="@+id/set_address"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:inputType="textUri" android:hint="10.0.0.10" />
+
+            <TextView style="@style/IcuLabel" android:text="@string/icu_port" />
+            <EditText android:id="@+id/set_port"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:inputType="number" android:hint="1935" />
+
+            <TextView style="@style/IcuLabel" android:text="@string/icu_path" />
+            <EditText android:id="@+id/set_path"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:inputType="text" android:hint="icu" />
+
+            <TextView style="@style/IcuLabel" android:text="@string/icu_username" />
+            <EditText android:id="@+id/set_username"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:inputType="text" />
+
+            <TextView style="@style/IcuLabel" android:text="@string/icu_password" />
+            <EditText android:id="@+id/set_password"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:inputType="textPassword" />
+        </LinearLayout>
+
+        <View android:layout_width="match_parent" android:layout_height="1dp"
+            android:layout_marginTop="10dp" android:layout_marginBottom="6dp"
+            android:background="#33FFFFFF" />
+
+        <TextView style="@style/IcuLabel" android:text="@string/icu_resolution" />
+        <Button android:id="@+id/set_resolution"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <TextView style="@style/IcuLabel" android:text="@string/icu_framerate" />
+        <Button android:id="@+id/set_fps"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <TextView style="@style/IcuLabel" android:text="@string/icu_bitrate" />
+        <EditText android:id="@+id/set_bitrate"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:inputType="number" android:hint="2000" />
+
+        <TextView style="@style/IcuLabel" android:text="@string/icu_rotation" />
+        <Button android:id="@+id/set_rotation"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+    </LinearLayout>
+</ScrollView>

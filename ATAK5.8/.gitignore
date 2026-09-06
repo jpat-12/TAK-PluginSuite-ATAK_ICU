@@ -1,0 +1,17 @@
+# Gradle / Android build artifacts
+.gradle/
+build/
+app/build/
+*/build/
+
+# Local machine config — never commit
+local.properties
+.takdev/
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Keep the SDK jar out of git (large; provided per-machine)
+app/libs/main.jar
