@@ -222,8 +222,7 @@ public class RtspServer {
             String sdp = buildSdp();
             respond(out, 200, "OK", cseq,
                     "Content-Type: application/sdp\r\n" +
-                    "Content-Length: " + sdp.length() + "\r\n" +
-                    "\r\n" + sdp);
+                    "Content-Length: " + sdp.length() + "\r\n", sdp);
         }
 
         private void handleSetup(PrintWriter out, String cseq, String uri, int clientPort) {
@@ -266,12 +265,23 @@ public class RtspServer {
             close();
         }
 
-        private void respond(PrintWriter out, int code, String msg, String cseq, String extra) {
-            out.print("RTSP/1.0 " + code + " " + msg + "\r\n");
-            out.print("CSeq: " + cseq + "\r\n");
-            out.print("Server: ICU-VideoStreamer/1.0\r\n");
-            if (!extra.isEmpty()) out.print(extra);
-            if (!extra.endsWith("\r\n")) out.print("\r\n");
+        private void respond(PrintWriter out, int code, String msg, String cseq, String headers) {
+            respond(out, code, msg, cseq, headers, "");
+        }
+
+        /** {@code headers}: zero or more complete "Name: value\r\n" lines — the blank
+         *  line ending the header block is appended HERE, unconditionally. The old
+         *  logic skipped it whenever the extra headers already ended in CRLF, so
+         *  OPTIONS/SETUP/PLAY responses went out unterminated; ATAK's player happens
+         *  to tolerate that, but strict RTSP clients (ffmpeg/ffprobe among them) hang
+         *  forever waiting for end-of-headers. */
+        private void respond(PrintWriter out, int code, String msg, String cseq,
+                             String headers, String body) {
+            out.print("RTSP/1.0 " + code + " " + msg + "\r\n" +
+                      "CSeq: " + cseq + "\r\n" +
+                      "Server: ICU-VideoStreamer/1.0\r\n" +
+                      headers +
+                      "\r\n" + body);
             out.flush();
         }
 
