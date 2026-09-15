@@ -24,6 +24,11 @@
   they appear in the photo album immediately as their own segregated "ICU
   Video" album (previously `atak/ICU Video`, which gallery apps don't index).
   Diag logs stay under `atak/ICU Video/logs`.
+- **LAN viewers now get audio.** The on-device RTSP server grows the same
+  RFC 3640 AAC track the server-push side has always had (`trackID=2`,
+  advertised only while mic audio is on) — previously the LAN broadcast was
+  silent video and only server-push viewers heard the operator. Video and KLV
+  track ids are unchanged, so existing viewers are unaffected.
 
 ## 3.1.1 — 2026-08-27
 
