@@ -20,6 +20,10 @@
   anchored to the monotonic clock and resyncs forward when it lags >150 ms, so
   lost audio lands as a small gap where the loss happened instead of growing
   lip-sync error. Resyncs are noted in `ICU Video/logs/icu-diag.log`.
+- **Recordings now save to `DCIM/ICU Video`** and are media-scanned on save, so
+  they appear in the photo album immediately as their own segregated "ICU
+  Video" album (previously `atak/ICU Video`, which gallery apps don't index).
+  Diag logs stay under `atak/ICU Video/logs`.
 
 ## 3.1.1 — 2026-08-27
 

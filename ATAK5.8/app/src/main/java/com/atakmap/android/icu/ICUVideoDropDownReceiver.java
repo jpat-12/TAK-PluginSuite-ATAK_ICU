@@ -900,6 +900,17 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
      *  app-private external-files dir the old path used is hidden from most of them).
      *  Falls back to the old location if the ATAK root isn't resolvable. */
     private java.io.File recordingsDir() {
+        // DCIM so the gallery/photo-album apps pick recordings up (paired with a
+        // media scan in stopRecording — a file written straight into DCIM isn't
+        // visible in the album until MediaStore indexes it). Own subfolder keeps
+        // them segregated as an "ICU Video" album. Diag logs stay under atak/.
+        try {
+            java.io.File dcim = android.os.Environment
+                    .getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DCIM);
+            if (dcim != null) return new java.io.File(dcim, "ICU Video");
+        } catch (Throwable t) {
+            Log.w(TAG, "DCIM unavailable: " + t.getMessage());
+        }
         try {
             java.io.File dir = com.atakmap.coremap.filesystem.FileSystemUtils.getItem("ICU Video");
             if (dir != null) return dir;
@@ -1007,6 +1018,19 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         Mp4Recorder.Result r = recorder.stop();
         stopRecordTicker();
         resetRecordUi();
+        // Tell MediaStore about the finished MP4 so it appears in the photo album
+        // right away (scan even when notify is suppressed — teardown must not
+        // orphan a recording from the gallery). Failure is cosmetic: the file is
+        // on disk either way and a device rescan will find it eventually.
+        if (r != null && r.ok && r.file != null) {
+            try {
+                android.media.MediaScannerConnection.scanFile(atakContext(),
+                        new String[]{ r.file.getAbsolutePath() },
+                        new String[]{ "video/mp4" }, null);
+            } catch (Throwable t) {
+                Log.w(TAG, "media scan: " + t.getMessage());
+            }
+        }
         if (r == null || !notify) return;
         if (r.ok) {
             Toast.makeText(atakContext(),
