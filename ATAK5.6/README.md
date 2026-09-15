@@ -1,4 +1,4 @@
-# ATAK-ICU — ATAK Plugin
+# ATAK-ICU — ATAK Plugin (ATAK-CIV 5.6)
 
 Streams the **phone's own camera** into ATAK and **broadcasts** it to other users
 over the local network / mesh — mirroring the UAS Tool drone-video experience, with
@@ -29,22 +29,46 @@ For multi-protocol serving (RTSP/RTSPS/SRT/RTMP) see [docs/ARCHITECTURE.md §7b]
 
 ## Build
 
-Target: **ATAK-CIV 5.6.0** SDK. Modeled on the QuickCapture plugin build.
+Target: **ATAK-CIV 5.6.0.12** SDK. Modeled on the QuickCapture plugin build.
+(The 5.6-targeted copy of this plugin still lives in `../ATAK5.6/`; the two are
+kept as separate trees so each keeps building against its own SDK.)
 
 1. Copy `local.properties.example` → `local.properties` and set your paths
-   (`sdk.dir`, `sdk.path` = the ATAK-CIV-5.6.0-SDK folder, `takdev.plugin`).
+   (`sdk.dir`, `sdk.path` = the ATAK-CIV-5.7.0.7-SDK folder, `takdev.plugin`).
    The SDK signing keystore is auto-staged from `sdk.path` at build time.
-2. Ensure `app/libs/main.jar` is the 5.6.0 SDK `main.jar` (gitignored; copy from the SDK).
+
+   > The 5.7 SDK zip extracts to a **nested** folder — `sdk.path` must point at the
+   > inner `ATAK-CIV-5.7.0.7-SDK\ATAK-CIV-5.7.0.7-SDK` directory (the one holding
+   > `main.jar`, `android_keystore`, `atak-gradle-takdev.jar`), not the outer one.
+
+2. Ensure `app/libs/main.jar` is the 5.7.0.7 SDK `main.jar` (gitignored; copy from the SDK).
 3. Build:
 
    ```
    ./gradlew :app:assembleCivDebug
    ```
 
-   Output APK: `app/build/outputs/apk/civ/debug/`.
+   Output APK: `app/build/outputs/apk/civ/debug/`
+   (`ATAK-Plugin-ICUVideoStreamer-<ver>-<git>-5.7.0-civ-debug.apk`).
+   `:app:assembleCivRelease` also builds clean (R8 + the ATAK repackage rules).
 
-4. Install to a device already running ATAK-CIV 5.6.0, then load via
+4. Install to a device already running ATAK-CIV 5.7.0, then load via
    Settings → Tool Preferences → Plugins.
+
+### 5.7 porting notes
+
+Only one API break between 5.6 and 5.7 affected this plugin:
+
+- **`com.atakmap.android.video.ConnectionEntry` is gone.** 5.6 still shipped that
+  compatibility shim; in 5.7 the class exists only as `gov.tak.api.video.ConnectionEntry`.
+  `share/VideoConnectionPublisher` imports the `gov.tak.api.video` type now —
+  the `(String alias, String url)` constructor and `setUID` are unchanged, and
+  `com.atakmap.android.video.manager.VideoXMLHandler.serialize(List<ConnectionEntry>)`
+  stayed put (its signature just moved to the new type).
+
+Build environment is otherwise identical to 5.6: AGP 8.13.0, `compileSdk 36`,
+Java 17, `minSdk 21` / `targetSdk 34`. Gradle wrapper bumped 8.13 → 8.14.3 to
+match the 5.7 SDK samples.
 
 ## Layout
 
@@ -57,6 +81,9 @@ app/src/main/java/com/atakmap/android/icu/
   share/    VideoConnectionPublisher, VideoCotBroadcaster (Phase 3)
   util/     NetworkUtils                                (reachable RTSP URL)
 ```
+
+Design docs in `docs/` are carried over verbatim from the 5.6 tree; nothing in the
+architecture changed for 5.7.
 
 Reference material lives in `../ATAK-Working/` (UAS Tool teardown) and the
 sibling `ATAK-Plugin_TAK_ICU` project (a working capture→RTSP→CoT proof).

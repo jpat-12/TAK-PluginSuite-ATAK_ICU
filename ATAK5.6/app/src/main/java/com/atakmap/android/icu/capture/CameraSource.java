@@ -62,6 +62,13 @@ public class CameraSource {
                 "USB camera (UVC)", CameraCharacteristics.LENS_FACING_EXTERNAL);
     }
 
+    /** The network (IP camera) entry — always offered; capture goes through
+     *  {@link NetworkCameraSource} pulling the RTSP URL configured in settings. */
+    public static CameraOption networkOption() {
+        return new CameraOption(com.atakmap.android.icu.capture.EncoderConfig.CAMERA_ID_NETWORK,
+                "Network camera (RTSP)", CameraCharacteristics.LENS_FACING_EXTERNAL);
+    }
+
     /**
      * Enumerate every camera Camera2 exposes, including USB/UVC webcams that the OS
      * surfaces as {@code LENS_FACING_EXTERNAL} devices (some Android builds with USB

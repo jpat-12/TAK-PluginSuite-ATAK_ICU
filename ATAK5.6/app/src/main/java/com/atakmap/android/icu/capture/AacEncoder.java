@@ -24,6 +24,12 @@ public class AacEncoder {
     private static final String MIME = "audio/mp4a-latm";
 
     public static final int SAMPLE_RATE = 44100;
+
+    /** Sample-clock lag behind the monotonic clock that triggers a forward resync
+     *  (see the anchoring comment in startLoop). Generous enough to ignore
+     *  scheduling jitter, small enough that lost audio can't become visible
+     *  lip-sync error — one dropped-buffer's worth on most devices. */
+    private static final long RESYNC_THRESHOLD_US = 150_000;
     public static final int CHANNELS    = 1;
     private static final int BITRATE    = 96_000;
 
@@ -83,6 +89,17 @@ public class AacEncoder {
             byte[] pcm = new byte[bufSize];
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             long totalSamples = 0;
+            // The audio clock is the running sample count (smooth, monotonic) but
+            // ANCHORED to the monotonic clock: if the mic loses data (buffer overrun
+            // on a loaded device — decode + two encodes + streaming), a pure sample
+            // count falls behind real time and the audio drifts visibly out of sync
+            // with video, whose timestamps come from the camera's monotonic clock.
+            // When the sample clock lags real time by more than the threshold, jump
+            // the base forward — the resulting small audio gap lands exactly where
+            // sound was actually lost, keeping lip-sync for the rest of the take.
+            final long startMonoUs = System.nanoTime() / 1000;
+            long baseAdjustUs = 0;
+            long resyncs = 0;
             while (running) {
                 // ── Feed PCM from the mic into the encoder ──
                 int read = record.read(pcm, 0, pcm.length);
@@ -94,8 +111,20 @@ public class AacEncoder {
                             if (in != null) {
                                 in.clear();
                                 in.put(pcm, 0, read);
-                                // pts from the running sample count keeps the audio clock monotonic
-                                long ptsUs = totalSamples * 1_000_000L / SAMPLE_RATE;
+                                long sampleUs = totalSamples * 1_000_000L / SAMPLE_RATE;
+                                long nowRelUs = (System.nanoTime() / 1000) - startMonoUs;
+                                // read() returns AFTER capturing this chunk; the chunk's
+                                // start is one buffer-duration earlier than "now".
+                                long chunkUs = (read / 2) * 1_000_000L / SAMPLE_RATE;
+                                long lagUs = (nowRelUs - chunkUs) - (sampleUs + baseAdjustUs);
+                                if (lagUs > RESYNC_THRESHOLD_US) {
+                                    baseAdjustUs += lagUs;
+                                    resyncs++;
+                                    com.atakmap.android.icu.util.DiagLog.w(TAG,
+                                            "mic lost ~" + (lagUs / 1000) + "ms (overrun) — "
+                                            + "resynced audio clock (#" + resyncs + ")");
+                                }
+                                long ptsUs = sampleUs + baseAdjustUs;
                                 codec.queueInputBuffer(inIdx, 0, read, ptsUs, 0);
                                 totalSamples += read / 2;   // 16-bit mono → 2 bytes/sample
                             }

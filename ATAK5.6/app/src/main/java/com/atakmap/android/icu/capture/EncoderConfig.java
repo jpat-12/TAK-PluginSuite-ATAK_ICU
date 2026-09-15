@@ -47,12 +47,22 @@ public class EncoderConfig {
     /** Sentinel {@link #cameraId} value selecting the direct UVC (USB) capture path. */
     public static final String CAMERA_ID_USB = "usb";
 
+    /** Sentinel {@link #cameraId} selecting a network (IP) camera — an RTSP pull from
+     *  {@link #networkCameraUrl} decoded into the pipeline (see NetworkCameraSource). */
+    public static final String CAMERA_ID_NETWORK = "network";
+
+    /** RTSP URL of the network camera (used when {@link #cameraId} is
+     *  {@link #CAMERA_ID_NETWORK}). Global — one camera rig, not per-destination. */
+    public String networkCameraUrl = "rtsp://172.20.1.1:554/stream1";
+
     /**
      * Extra rotation applied to the preview (and, best-effort, the encoded stream).
-     * -1 = Auto (derive from sensor + display); otherwise 0/90/180/270.
-     * Manual override exists because some devices show inverted video in landscape.
+     * -1 = Auto — follow the host ATAK activity's current display orientation,
+     * including its force-portrait/landscape preference (resolved per broadcast by
+     * {@link CapturePipeline#resolveRotation}); otherwise 0/90/180/270. The manual
+     * values exist because some devices show inverted video in landscape.
      */
-    public int rotationDegrees = 270;
+    public int rotationDegrees = -1;
 
     /** Whether the persistent on-map broadcast-status badge is shown. Default on. */
     public boolean showStatusWidget = true;
@@ -65,6 +75,17 @@ public class EncoderConfig {
      * background). Default false = keep the screen awake while live.
      */
     public boolean streamWithScreenOff = false;
+
+    /**
+     * Local-recording quality override — record at a different (usually higher) quality
+     * than the stream, e.g. stream 720p15 over a constrained link but keep a 1080p30
+     * file. 0 = record the broadcast stream as-is (no second encoder, the original
+     * zero-cost tap). Non-zero values spin up a second H.264 encoder fed from the same
+     * camera; the camera then captures at the higher of the two specs. Global, not
+     * per-destination — the recording is local, so LAN/SERVER doesn't change it.
+     */
+    public int recordHeight = 0;   // 0 = same as stream, else 480/720/1080
+    public int recordFps    = 0;   // 0 = same as stream, else 15/24/30
 
     /**
      * How often (seconds) the FOV/video detail is refreshed and force-sent on the self

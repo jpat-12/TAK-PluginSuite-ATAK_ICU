@@ -20,6 +20,11 @@ import java.nio.ByteBuffer;
  * would double the load on a device that's usually already thermally limited, and the two
  * files would not agree frame-for-frame with what viewers saw.</p>
  *
+ * <p>(The operator can opt into that trade with the record-quality override — see
+ * {@link EncoderConfig#recordHeight}/{@link EncoderConfig#recordFps} and
+ * {@link CapturePipeline#startHqRecord} — in which case this class is simply fed by the
+ * second encoder instead; nothing here changes.)</p>
+ *
  * <p>Consequences of riding the broadcast encoder, all of which the pane accounts for:</p>
  * <ul>
  *   <li>Recording requires an active broadcast — there is no encoded stream otherwise.</li>

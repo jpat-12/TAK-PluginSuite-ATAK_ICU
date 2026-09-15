@@ -65,6 +65,12 @@
 -keep class * extends com.atak.plugins.impl.AbstractPluginTool {
 }
 
+# Keep this plugin's own classes by name — the entry points above cover the
+# lifecycle/tool, but plugin.xml and reflection-reached classes must survive
+# release obfuscation too (tak.gov submission requirement: the keep rule names
+# THIS plugin's package, not a template leftover).
+-keep class com.atakmap.android.icu.** { *; }
+
 # overcome an existing bug in the gradle subsystem (3.5.x)
 -keep class module-info
 

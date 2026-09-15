@@ -2,7 +2,13 @@
 
 ## 3.1.2 — 2026-09-15
 
-### ATAK-ICU 5.7 + 5.8 trees
+### All trees
+- **The 5.6 tree is synced to 3.1.2** — it had been parked at the 2.5 era.
+  It is now a copy of the 5.7 tree with the single source difference 5.6
+  requires (`ConnectionEntry` still lives under `com.atakmap.android.video`
+  there), so every 3.x feature and fix below applies to 5.6 fleets too.
+
+### ATAK-ICU 5.6 + 5.7 + 5.8 trees
 - **Local recordings no longer pause when the network chokes.** Transports were
   fed synchronously on the encoder's drain thread, so a blocking socket write on
   a congested link stalled the encoder, froze the GL stage, and baked real
