@@ -26,7 +26,10 @@ public class TransportManager implements CapturePipeline.Sink {
     private ErrorListener errorListener;
     public void setErrorListener(ErrorListener l) { this.errorListener = l; }
 
-    public void register(Transport t) { transports.add(t); }
+    /** Every transport is wrapped in {@link AsyncTransport}: media delivery runs on
+     *  the transport's own sender thread, so a blocking socket can NEVER stall the
+     *  encoder drain thread (and with it capture + the local recording). */
+    public void register(Transport t) { transports.add(new AsyncTransport(t)); }
     public void clear() { transports.clear(); }
 
     /** Transports still registered — {@link #startAll} drops any that failed to start.

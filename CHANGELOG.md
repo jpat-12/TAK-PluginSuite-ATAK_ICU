@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.1.2 — 2026-09-15
+
+### ATAK-ICU 5.7 + 5.8 trees
+- **Local recordings no longer pause when the network chokes.** Transports were
+  fed synchronously on the encoder's drain thread, so a blocking socket write on
+  a congested link stalled the encoder, froze the GL stage, and baked real
+  capture gaps into the on-device MP4 — the field symptom was every operator's
+  recording "pausing like it was buffering", regardless of record-quality
+  setting. Every transport now runs behind its own bounded queue + sender
+  thread (`serve/AsyncTransport`): when the network can't keep up, the STREAM
+  drops frames (resuming on a clean keyframe/GOP boundary) while capture,
+  recording, and other transports keep running at full rate. The recorder is
+  also fed before the serve layer in the pipeline callbacks.
+- **Audio can no longer drift out of sync in recordings.** AAC timestamps came
+  purely from the mic's running sample count; a buffer overrun on a loaded
+  device silently lost samples and let the audio clock fall progressively
+  behind the video's (camera-clock) timestamps. The sample clock is now
+  anchored to the monotonic clock and resyncs forward when it lags >150 ms, so
+  lost audio lands as a small gap where the loss happened instead of growing
+  lip-sync error. Resyncs are noted in `ICU Video/logs/icu-diag.log`.
+
 ## 3.1.1 — 2026-08-27
 
 ### ATAK-ICU 5.7 tree
