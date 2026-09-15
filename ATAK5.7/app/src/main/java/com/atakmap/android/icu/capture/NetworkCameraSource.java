@@ -93,20 +93,30 @@ public class NetworkCameraSource {
         // the next SETUP until it expires — which made an immediate stop→start fail.
         OutputStream out = ctrlOut;
         String url = ctrlUrl;
-        if (out != null && url != null && sessionId != null) {
-            try {
-                synchronized (writeLock) {
-                    out.write(("TEARDOWN " + url + " RTSP/1.0\r\nCSeq: "
-                            + cseq.getAndIncrement() + "\r\nSession: " + sessionId + "\r\n"
-                            + (authHeader != null ? authHeader + "\r\n" : "") + "\r\n")
-                            .getBytes(StandardCharsets.UTF_8));
-                    out.flush();
+        final String sid = sessionId;
+        if (out != null && url != null && sid != null) {
+            // On a background thread: stop() runs on the UI thread, and a socket write
+            // there throws NetworkOnMainThreadException — which silently killed every
+            // TEARDOWN until the diag log caught it. Briefly joined so the socket
+            // close below doesn't race the write.
+            Thread td = new Thread(() -> {
+                try {
+                    synchronized (writeLock) {
+                        out.write(("TEARDOWN " + url + " RTSP/1.0\r\nCSeq: "
+                                + cseq.getAndIncrement() + "\r\nSession: " + sid + "\r\n"
+                                + (authHeader != null ? authHeader + "\r\n" : "") + "\r\n")
+                                .getBytes(StandardCharsets.UTF_8));
+                        out.flush();
+                    }
+                    DiagLog.d(TAG, "TEARDOWN sent (session " + sid + ")");
+                    Thread.sleep(150);   // give it a beat to reach the camera before close
+                } catch (Exception e) {
+                    DiagLog.w(TAG, "TEARDOWN failed: " + e);
                 }
-                DiagLog.d(TAG, "TEARDOWN sent (session " + sessionId + ")");
-                Thread.sleep(150);   // give it a beat to reach the camera before close
-            } catch (Exception e) {
-                DiagLog.w(TAG, "TEARDOWN failed: " + e);
-            }
+            }, "ICU-NetCamTeardown");
+            td.setDaemon(true);
+            td.start();
+            try { td.join(500); } catch (InterruptedException ignored) {}
         }
         sessionId = null;
         ctrlOut = null;
@@ -166,7 +176,15 @@ public class NetworkCameraSource {
 
             DiagLog.d(TAG, "connecting " + host + ":" + port);
             socket = new Socket();
-            socket.connect(new InetSocketAddress(host, port), CONNECT_TIMEOUT_MS);
+            try {
+                socket.connect(new InetSocketAddress(host, port), CONNECT_TIMEOUT_MS);
+            } catch (Exception ce) {
+                // Distinct from a mid-stream stall — without this, a camera that isn't
+                // there at all was reported as "stopped sending", which sends the
+                // operator hunting the wrong problem (seen in the field diag log).
+                throw new IllegalStateException("can't reach " + host + ":" + port
+                        + " — is the camera connected and powered?");
+            }
             socket.setSoTimeout(READ_TIMEOUT_MS);
             socket.setTcpNoDelay(true);
             InputStream in = new BufferedInputStream(socket.getInputStream(), 64 * 1024);
