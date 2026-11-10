@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.2.0 — 2026-11-10
+
+### ATAK-ICU 5.7 tree
+- **Provision every setting with an ATAK `.pref` file.** The QR code fills in only the
+  stream URL. A standard ATAK preference file with an `icu_video_prefs` block can now
+  set every field on the BROADCAST, VIDEO (both the LAN and the Server profile) and
+  DISPLAY & POWER cards. Use the Import Manager, a data package or MDM, the same as
+  for ATAK's own `.pref` files. The plugin applies an import at once, with no ATAK
+  restart. A live broadcast restarts with the new settings, the same as Settings →
+  Save. Template: `ATAK5.7/docs/icu-settings-template.pref`; key reference:
+  `ATAK5.7/docs/PREF_FILE.md`.
+- Settings are now read tolerantly. A value stored with the wrong type (for example a
+  number written as text in a hand-made `.pref`) is converted, or falls back to its
+  default, and no longer stops the plugin from loading.
+
 ## 3.1.1 — 2026-08-27
 
 ### ATAK-ICU 5.7 tree

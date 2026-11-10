@@ -44,6 +44,7 @@ import com.atakmap.android.icu.ui.StreamStatusWidget;
 import com.atakmap.android.icu.ui.qr.QrScanDialog;
 import com.atakmap.android.icu.util.DiagLog;
 import com.atakmap.android.icu.util.NetworkMonitor;
+import com.atakmap.android.icu.util.PrefImportListener;
 import com.atakmap.android.icu.util.Prefs;
 import com.atakmap.android.icu.util.StreamUrlParser;
 import com.atakmap.android.maps.MapView;
@@ -108,6 +109,11 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     // survive one; see onNetworkChanged.
     private NetworkMonitor networkMonitor;
 
+    // Reloads settings when ATAK imports a .pref file that targets icu_video_prefs
+    // (Import Manager, data package, MDM). See onPreferencesImported.
+    private final PrefImportListener prefImport =
+            new PrefImportListener(this::onPreferencesImported);
+
     private TextView    statusText;
     private int         defaultStatusColor;    // status text's normal colour (for reset after errors)
     private boolean     authFailureHandled;    // guard so a push auth failure auto-stops only once
@@ -163,6 +169,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         // so they're lost on restart (values only survive in the in-memory cache
         // during the session). atakContext() == getMapView().getContext().
         Prefs.load(atakContext(), serverConfig, config);
+        prefImport.register();
         // Persistent field log (<atak>/ICU Video/logs/icu-diag.log) — diagnosable runs
         // with no adb attached, which is the norm when ethernet owns the USB port.
         try {
@@ -1125,6 +1132,39 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     == MediaServerConfig.Destination.SERVER ? "Server" : "LAN");
     }
 
+    /**
+     * ATAK finished importing a {@code .pref} file. If it changed any ICU setting,
+     * adopt the new values exactly as Settings → Save would: refresh the UI and, when
+     * live, restart the broadcast so the new settings take effect at once. Imports that
+     * don't touch {@code icu_video_prefs} (most of them) are ignored.
+     */
+    private void onPreferencesImported() {
+        MediaServerConfig importedSrv = new MediaServerConfig();
+        EncoderConfig importedEnc = new EncoderConfig();
+        Prefs.load(atakContext(), importedSrv, importedEnc);
+        if (Prefs.snapshot(importedSrv, importedEnc)
+                .equals(Prefs.snapshot(serverConfig, config))) return;
+
+        Log.i(TAG, "ICU settings changed by a .pref import — reloading");
+        DiagLog.d(TAG, "settings reloaded from .pref import");
+        Prefs.load(atakContext(), serverConfig, config);
+        // The settings page stages its own copy of every field; after an import that
+        // copy is stale, and saving it would undo the import.
+        hideSettingsPage();
+        statusWidget.setEnabled(config.showStatusWidget);
+        refreshDestBadge();
+        refreshDestToggle();
+        applyPreviewRotation();
+        if (pipeline.isRunning()) {
+            Toast.makeText(pluginContext, "ICU settings imported — restarting broadcast…",
+                    Toast.LENGTH_SHORT).show();
+            stopBroadcast();
+            startBroadcast();
+        } else {
+            Toast.makeText(pluginContext, "ICU settings imported", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     /** Quick-bar LAN ⇄ Server flip: switch the destination, swap in that destination's
      *  capture/encode profile, persist, and — if live — restart the stream onto the new
      *  destination so the toggle takes effect immediately. */
@@ -1874,6 +1914,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
     @Override
     protected void disposeImpl() {
+        prefImport.unregister();
         getMapView().removeOnMapViewResizedListener(orientationWatcher);
         stopRecording(false);
         stopNetworkMonitor();
