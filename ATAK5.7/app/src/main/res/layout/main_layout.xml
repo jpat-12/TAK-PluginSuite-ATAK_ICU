@@ -113,6 +113,19 @@
                     android:padding="@dimen/icu_space_lg"
                     android:textColor="@color/icu_text_muted"
                     android:text="@string/icu_preview_placeholder" />
+
+                <!-- Idle only: camera passthrough without broadcasting.
+                     Toggles Start preview ⇄ Stop preview; hidden while live. -->
+                <Button
+                    android:id="@+id/icu_preview_button"
+                    style="@style/Icu.Button.Secondary"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="bottom|center_horizontal"
+                    android:layout_marginBottom="@dimen/icu_space_lg"
+                    android:paddingStart="@dimen/icu_space_lg"
+                    android:paddingEnd="@dimen/icu_space_lg"
+                    android:text="@string/icu_start_preview" />
             </FrameLayout>
 
             <!-- Right edge: vertical quick-action stack (docked column) -->

@@ -11,6 +11,13 @@
   restart. A live broadcast restarts with the new settings, the same as Settings →
   Save. Template: `ATAK5.7/docs/icu-settings-template.pref`; key reference:
   `ATAK5.7/docs/PREF_FILE.md`.
+- **Camera preview without broadcasting.** When the panel is open and not live, a
+  **Start preview** button on the preview area shows the active camera, framed and
+  rotated exactly as it would be broadcast. It works with the phone camera, a USB
+  camera or a network camera. Nothing leaves the device: no stream, no audio, no CoT.
+  While the preview runs, the button reads **Stop preview**. Tapping Broadcast goes
+  live from the preview. Closing the panel stops the preview. Snapshot and Record
+  still need a live broadcast.
 - Settings are now read tolerantly. A value stored with the wrong type (for example a
   number written as text in a hand-made `.pref`) is converted, or falls back to its
   default, and no longer stops the plugin from loading.
