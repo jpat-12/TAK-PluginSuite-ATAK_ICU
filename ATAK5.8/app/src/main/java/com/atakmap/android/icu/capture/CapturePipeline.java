@@ -412,25 +412,7 @@ public class CapturePipeline {
     private static int even(int v) { return v & ~1; }
 
     private static EncoderConfig cloneOf(EncoderConfig src) {
-        EncoderConfig c = new EncoderConfig();
-        c.resolution      = src.resolution;
-        c.captureW        = src.captureW;
-        c.captureH        = src.captureH;
-        c.bitrateKbps     = src.bitrateKbps;
-        c.fps             = src.fps;
-        c.gopSeconds      = src.gopSeconds;
-        c.useFrontCamera  = src.useFrontCamera;
-        c.cameraId        = src.cameraId;
-        c.networkCameraUrl = src.networkCameraUrl;
-        c.rotationDegrees = src.rotationDegrees;
-        c.showStatusWidget = src.showStatusWidget;
-        c.streamAudio     = src.streamAudio;
-        c.streamWithScreenOff = src.streamWithScreenOff;
-        c.recordHeight    = src.recordHeight;
-        c.recordFps       = src.recordFps;
-        c.fovRefreshSec   = src.fovRefreshSec;
-        c.fovRangeM       = src.fovRangeM;
-        return c;
+        return src.copy();
     }
 
     /**

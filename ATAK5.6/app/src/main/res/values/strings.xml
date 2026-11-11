@@ -8,6 +8,9 @@
     <string name="icu_broadcast">Broadcast</string>
     <string name="icu_stop">Stop</string>
     <string name="icu_preview_placeholder">Camera preview</string>
+    <string name="icu_start_preview">Start preview</string>
+    <string name="icu_stop_preview">Stop preview</string>
+    <string name="icu_status_preview">Preview — not broadcasting</string>
     <string name="icu_settings">Settings</string>
     <string name="icu_record">Record</string>
     <string name="icu_recording">Recording</string>
