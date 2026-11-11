@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.2.0 — 2026-11-10
+
+### ATAK-ICU 5.6 + 5.7 + 5.8 trees
+- **Provision every setting with an ATAK `.pref` file.** The QR code fills in only the
+  stream URL. A standard ATAK preference file with an `icu_video_prefs` block can now
+  set every field on the BROADCAST, VIDEO (both the LAN and the Server profile) and
+  DISPLAY & POWER cards. Use the Import Manager, a data package or MDM, the same as
+  for ATAK's own `.pref` files. The plugin applies an import at once, with no ATAK
+  restart. A live broadcast restarts with the new settings, the same as Settings →
+  Save. Template: `ATAK5.x/docs/icu-settings-template.pref`; key reference:
+  `ATAK5.x/docs/PREF_FILE.md`.
+- **Camera preview without broadcasting.** When the panel is open and not live, a
+  **Start preview** button on the preview area shows the active camera, framed and
+  rotated exactly as it would be broadcast. It works with the phone camera, a USB
+  camera or a network camera. Nothing leaves the device: no stream, no audio, no CoT.
+  While the preview runs, the button reads **Stop preview**. Tapping Broadcast goes
+  live from the preview. Closing the panel stops the preview. Snapshot and Record
+  still need a live broadcast.
+- Settings are now read tolerantly. A value stored with the wrong type (for example a
+  number written as text in a hand-made `.pref`) is converted, or falls back to its
+  default, and no longer stops the plugin from loading.
+
 ## 3.1.2 — 2026-09-15
 
 ### All trees

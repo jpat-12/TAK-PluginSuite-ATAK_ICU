@@ -99,4 +99,28 @@ public class EncoderConfig {
      * a visual reach for the wedge on peers' maps; does not affect the video. Default 100m.
      */
     public int fovRangeM = 100;
+
+    /** A field-by-field copy, so a caller can adjust one run's config (e.g. a preview
+     *  with audio off) without touching the operator's saved settings. */
+    public EncoderConfig copy() {
+        EncoderConfig c = new EncoderConfig();
+        c.resolution      = resolution;
+        c.captureW        = captureW;
+        c.captureH        = captureH;
+        c.bitrateKbps     = bitrateKbps;
+        c.fps             = fps;
+        c.gopSeconds      = gopSeconds;
+        c.useFrontCamera  = useFrontCamera;
+        c.cameraId        = cameraId;
+        c.networkCameraUrl = networkCameraUrl;
+        c.rotationDegrees = rotationDegrees;
+        c.showStatusWidget = showStatusWidget;
+        c.streamAudio     = streamAudio;
+        c.streamWithScreenOff = streamWithScreenOff;
+        c.recordHeight    = recordHeight;
+        c.recordFps       = recordFps;
+        c.fovRefreshSec   = fovRefreshSec;
+        c.fovRangeM       = fovRangeM;
+        return c;
+    }
 }
