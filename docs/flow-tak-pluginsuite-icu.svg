@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" font-family="Franklin Gothic Book, Franklin Gothic, Arial, Helvetica, sans-serif">
-  <title>TAK-PluginSuite-ICU: capture to CoT flow</title>
+  <title>TAK-PluginSuite-ATAK_ICU: capture to CoT flow</title>
 
   <defs>
     <!-- Parsons Brand Colors 2020 -->
@@ -33,7 +33,7 @@
 
   <!-- ── Title ─────────────────────────────────────────────────────────── -->
   <rect x="60" y="44" width="6" height="46" fill="#00AEE6"/>
-  <text class="h1" x="84" y="70">TAK-PluginSuite-ICU</text>
+  <text class="h1" x="84" y="70">TAK-PluginSuite-ATAK_ICU</text>
   <text class="sub" x="84" y="96">Device camera to live map video: two independent plugins, one shared TAK delivery path</text>
 
   <!-- ── Column headers ────────────────────────────────────────────────── -->

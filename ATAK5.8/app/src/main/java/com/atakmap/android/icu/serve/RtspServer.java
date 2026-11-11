@@ -279,7 +279,7 @@ public class RtspServer {
                              String headers, String body) {
             out.print("RTSP/1.0 " + code + " " + msg + "\r\n" +
                       "CSeq: " + cseq + "\r\n" +
-                      "Server: ICU-VideoStreamer/1.0\r\n" +
+                      "Server: ATAK-ICU/1.0\r\n" +
                       headers +
                       "\r\n" + body);
             out.flush();
