@@ -101,7 +101,7 @@ def main() -> None:
     version = plugin_version(tree)
     sdk = args.tree.replace("ATAK", "")          # ATAK5.6 -> 5.6
     out = root / (args.output or
-                  f"ATAK-ICU-{version}-ATAK-{sdk}-civ-release.zip")
+                  f"ATAK-Plugin-ATAK_ICU-{version}-{sdk}-civ-release.zip")
 
     keep_cache = not args.no_gradle_cache
     files = dirs = 0

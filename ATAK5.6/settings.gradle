@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = 'ATAK-ICU'
+rootProject.name = 'ATAK_ICU'
 
 include ':app'

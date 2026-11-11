@@ -49,7 +49,7 @@ kept as separate trees so each keeps building against its own SDK.)
    ```
 
    Output APK: `app/build/outputs/apk/civ/debug/`
-   (`ATAK-ICU-<ver>-<git>-5.8.0-civ-debug.apk`).
+   (`ATAK-Plugin-ATAK_ICU-<ver>-<git>-5.8.0-civ-debug.apk`).
    `:app:assembleCivRelease` also builds clean (R8 + the ATAK repackage rules).
 
 4. Install to a device already running ATAK-CIV 5.7.0, then load via

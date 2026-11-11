@@ -182,9 +182,8 @@ android {
 
     sourceSets {
         main {
-            // Archives are named for the product (ATAK-ICU-<ver>-<git>-<atak>), not the
-            // template's "ATAK-Plugin-" + name, which would read ATAK-Plugin-ATAK-ICU.
-            setProperty("archivesBaseName", rootProject.name + "-" + PLUGIN_VERSION + "-" + getVersionName() + "-" + ATAK_VERSION)
+            // Keep archive/version naming consistent with the wider plugin community.
+            setProperty("archivesBaseName", "ATAK-Plugin-" + rootProject.name + "-" + PLUGIN_VERSION + "-" + getVersionName() + "-" + ATAK_VERSION)
             // versionCode derived from PLUGIN_VERSION (3.0.0 -> 30000), NOT takdev's
             // getVersionCode(): that is git-derived, so every build from a source zip
             // (tak.gov, and the archives this plugin actually ships from) falls back
