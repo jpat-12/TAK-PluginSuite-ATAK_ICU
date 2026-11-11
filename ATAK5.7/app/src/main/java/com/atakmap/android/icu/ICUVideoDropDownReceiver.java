@@ -44,6 +44,7 @@ import com.atakmap.android.icu.ui.StreamStatusWidget;
 import com.atakmap.android.icu.ui.qr.QrScanDialog;
 import com.atakmap.android.icu.util.DiagLog;
 import com.atakmap.android.icu.util.NetworkMonitor;
+import com.atakmap.android.icu.util.PrefImportListener;
 import com.atakmap.android.icu.util.Prefs;
 import com.atakmap.android.icu.util.StreamUrlParser;
 import com.atakmap.android.maps.MapView;
@@ -108,12 +109,21 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     // survive one; see onNetworkChanged.
     private NetworkMonitor networkMonitor;
 
+    // Reloads settings when ATAK imports a .pref file that targets icu_video_prefs
+    // (Import Manager, data package, MDM). See onPreferencesImported.
+    private final PrefImportListener prefImport =
+            new PrefImportListener(this::onPreferencesImported);
+
     private TextView    statusText;
     private int         defaultStatusColor;    // status text's normal colour (for reset after errors)
     private boolean     authFailureHandled;    // guard so a push auth failure auto-stops only once
     private TextView    destBadge;
     private TextView    authBadge;
     private TextView    previewHint;
+    private Button      previewButton;
+    /** True while the pipeline runs for a local preview only (no transports, no CoT).
+     *  {@code pipeline.isRunning() && !previewing} is a broadcast — see isBroadcasting(). */
+    private boolean     previewing;
     private TextView    broadcastLabel;
     private TextView    recordLabel;
     private View        liveDot;
@@ -146,6 +156,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         destBadge       = root.findViewById(R.id.icu_dest_badge);
         authBadge       = root.findViewById(R.id.icu_auth_badge);
         previewHint     = root.findViewById(R.id.icu_preview_hint);
+        previewButton   = root.findViewById(R.id.icu_preview_button);
         broadcastLabel  = root.findViewById(R.id.icu_broadcast_label);
         recordLabel     = root.findViewById(R.id.icu_record_label);
         liveDot         = root.findViewById(R.id.icu_live_dot);
@@ -163,6 +174,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         // so they're lost on restart (values only survive in the in-memory cache
         // during the session). atakContext() == getMapView().getContext().
         Prefs.load(atakContext(), serverConfig, config);
+        prefImport.register();
         // Persistent field log (<atak>/ICU Video/logs/icu-diag.log) — diagnosable runs
         // with no adb attached, which is the norm when ethernet owns the USB port.
         try {
@@ -188,6 +200,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         recordButton.setOnClickListener(v -> takeRecord());
         destToggleButton.setOnClickListener(v -> toggleDestination());
         settingsButton.setOnClickListener(v -> showSettingsPage());
+        previewButton.setOnClickListener(v -> togglePreview());
 
         // Drives "Auto — match ATAK" rotation: an orientation flip resizes the map view
         // (fires with the pane closed too, unlike the pane's own layout callbacks).
@@ -315,12 +328,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         if (now == lastAutoRotation) return;
         lastAutoRotation = now;
         applyPreviewRotation();
-        if (pipeline.isRunning()) {
-            Toast.makeText(pluginContext, "Orientation changed — restarting stream…",
-                    Toast.LENGTH_SHORT).show();
-            stopBroadcast();
-            startBroadcast();
-        }
+        restartCapture("Orientation changed — restarting stream…");
     }
 
     /** Rotate the preview upright and letterbox it to the source aspect ratio (the
@@ -386,10 +394,110 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         previewView.setTransform(m);
     }
 
+    // ── Local preview (no broadcast) ─────────────────────────────────────────────
+    // Runs the same capture pipeline a broadcast uses — so every source (phone camera,
+    // USB, network camera), the rotation and the framing look exactly as they would on
+    // the wire — but with no transports, no audio, no CoT/FOV/KLV and no wake lock.
+    // Nothing leaves the device. Snapshot and Record still need a live broadcast.
+
+    /** A broadcast is live (the pipeline is running and it isn't just a preview). */
+    private boolean isBroadcasting() { return pipeline.isRunning() && !previewing; }
+
+    private void togglePreview() {
+        if (previewing) stopPreview(); else startPreview();
+    }
+
+    private void startPreview() {
+        if (pipeline.isRunning()) return;            // live or already previewing
+        boolean netCam = EncoderConfig.CAMERA_ID_NETWORK.equals(config.cameraId);
+        if (!netCam && !hasCameraPermission()) { requestCameraPermission(); return; }
+        if (previewSurface == null) {
+            Toast.makeText(pluginContext, "Preview not ready yet — try again.",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+        DiagLog.d(TAG, "startPreview camera=" + (config.cameraId.isEmpty() ? "auto" : config.cameraId));
+        previewing = true;
+        previewButton.setEnabled(false);
+        setStatus("Starting camera…");
+        pipeline.setSink(null);                      // nothing goes out
+        if (previewView.getSurfaceTexture() != null) sizePreviewBuffer(previewView.getSurfaceTexture());
+
+        EncoderConfig cfg = config.copy();
+        cfg.streamAudio = false;                     // no mic for a local preview
+        cfg.recordHeight = 0;                        // no second (HQ record) encoder
+        cfg.recordFps = 0;
+        pipeline.start(atakContext(), cfg, previewSurface, new CapturePipeline.Listener() {
+            @Override public void onStarted() {
+                ui.post(() -> {
+                    if (!previewing) return;         // stopped before the camera came up
+                    // The pane sizes its letterbox from config.captureW/H.
+                    config.captureW = cfg.captureW;
+                    config.captureH = cfg.captureH;
+                    applyPreviewRotation();
+                    previewHint.setVisibility(View.GONE);
+                    showCameraView(true);
+                    refreshPreviewButton();
+                    setStatus(ps(R.string.icu_status_preview));
+                });
+            }
+            @Override public void onError(String message) {
+                Log.w(TAG, "preview error: " + message);
+                ui.post(() -> {
+                    if (!previewing) return;
+                    stopPreview();
+                    setStatusError("Preview failed: " + message);
+                });
+            }
+            @Override public void onFrame(int totalNalUnits) {}
+        });
+    }
+
+    private void stopPreview() {
+        if (!previewing) return;
+        DiagLog.d(TAG, "stopPreview");
+        previewing = false;
+        pipeline.stop();
+        resetIdleUi();
+    }
+
+    /**
+     * Show or hide the camera view. A stopped camera leaves its last frame frozen in the
+     * TextureView, which reads as a live feed; hide it whenever capture is idle. Alpha,
+     * not visibility, so the SurfaceTexture stays attached for the next start.
+     */
+    private void showCameraView(boolean show) {
+        if (previewView != null) previewView.setAlpha(show ? 1f : 0f);
+    }
+
+    /** Show the preview toggle only while not broadcasting, labelled for the next action. */
+    private void refreshPreviewButton() {
+        if (previewButton == null) return;
+        previewButton.setVisibility(isBroadcasting() ? View.GONE : View.VISIBLE);
+        previewButton.setEnabled(true);
+        previewButton.setText(previewing ? R.string.icu_stop_preview : R.string.icu_start_preview);
+    }
+
+    /**
+     * Settings that shape the capture changed (Save, .pref import, destination toggle,
+     * orientation flip). Restart whatever is running so it picks them up: a live
+     * broadcast restarts on air (with a toast saying why), a preview restarts quietly.
+     */
+    private void restartCapture(String broadcastToast) {
+        if (isBroadcasting()) {
+            Toast.makeText(pluginContext, broadcastToast, Toast.LENGTH_SHORT).show();
+            stopBroadcast();
+            startBroadcast();
+        } else if (previewing) {
+            stopPreview();
+            startPreview();
+        }
+    }
+
     // ── Broadcast ────────────────────────────────────────────────────────────────
 
     private void toggleBroadcast() {
-        if (pipeline.isRunning()) {
+        if (isBroadcasting()) {
             // Verify before dropping the feed for anyone watching.
             confirm(ps(R.string.icu_confirm_stop_title),
                     ps(R.string.icu_confirm_stop_msg),
@@ -426,6 +534,9 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     }
 
     private void startBroadcast() {
+        // Going live from a preview: release the camera first, the broadcast reopens it
+        // with its transports attached.
+        stopPreview();
         DiagLog.d(TAG, "startBroadcast camera=" + (config.cameraId.isEmpty() ? "auto" : config.cameraId)
                 + " dest=" + serverConfig.destination
                 + " " + config.resolution.label + "@" + config.fps);
@@ -478,6 +589,8 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     broadcastLabel.setText(R.string.icu_stop);
                     liveDot.setVisibility(View.VISIBLE);
                     previewHint.setVisibility(View.GONE);
+                    showCameraView(true);
+                    refreshPreviewButton();
                     // Keep the screen awake while streaming unless the user opted to allow
                     // it to sleep; when allowed, hold a partial wake lock so the CPU (and
                     // thus capture/encode/network) keeps running with the screen off.
@@ -815,7 +928,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
      * with the plugin panel closed — e.g. triggered from the self-marker radial.
      */
     private void takeSnapshot() {
-        if (!pipeline.isRunning()) {
+        if (!isBroadcasting()) {
             Toast.makeText(atakContext(), "Start broadcasting first.", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -900,6 +1013,17 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
      *  app-private external-files dir the old path used is hidden from most of them).
      *  Falls back to the old location if the ATAK root isn't resolvable. */
     private java.io.File recordingsDir() {
+        // DCIM so the gallery/photo-album apps pick recordings up (paired with a
+        // media scan in stopRecording — a file written straight into DCIM isn't
+        // visible in the album until MediaStore indexes it). Own subfolder keeps
+        // them segregated as an "ICU Video" album. Diag logs stay under atak/.
+        try {
+            java.io.File dcim = android.os.Environment
+                    .getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DCIM);
+            if (dcim != null) return new java.io.File(dcim, "ICU Video");
+        } catch (Throwable t) {
+            Log.w(TAG, "DCIM unavailable: " + t.getMessage());
+        }
         try {
             java.io.File dir = com.atakmap.coremap.filesystem.FileSystemUtils.getItem("ICU Video");
             if (dir != null) return dir;
@@ -912,7 +1036,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
     private void takeRecord() {
         if (recorder.isRunning()) { stopRecording(true); return; }
 
-        if (!pipeline.isRunning()) {
+        if (!isBroadcasting()) {
             Toast.makeText(atakContext(),
                     "Start broadcasting first — recording captures the broadcast stream.",
                     Toast.LENGTH_LONG).show();
@@ -1007,6 +1131,19 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         Mp4Recorder.Result r = recorder.stop();
         stopRecordTicker();
         resetRecordUi();
+        // Tell MediaStore about the finished MP4 so it appears in the photo album
+        // right away (scan even when notify is suppressed — teardown must not
+        // orphan a recording from the gallery). Failure is cosmetic: the file is
+        // on disk either way and a device rescan will find it eventually.
+        if (r != null && r.ok && r.file != null) {
+            try {
+                android.media.MediaScannerConnection.scanFile(atakContext(),
+                        new String[]{ r.file.getAbsolutePath() },
+                        new String[]{ "video/mp4" }, null);
+            } catch (Throwable t) {
+                Log.w(TAG, "media scan: " + t.getMessage());
+            }
+        }
         if (r == null || !notify) return;
         if (r.ok) {
             Toast.makeText(atakContext(),
@@ -1110,6 +1247,8 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         broadcastLabel.setText(R.string.icu_broadcast);
         liveDot.setVisibility(View.GONE);
         previewHint.setVisibility(View.VISIBLE);
+        showCameraView(false);
+        refreshPreviewButton();
         if (authBadge != null) authBadge.setVisibility(View.GONE);
         setStatus(pluginContext.getString(R.string.icu_status_idle));
     }
@@ -1123,6 +1262,37 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
         if (destToggleLabel != null)
             destToggleLabel.setText(serverConfig.destination
                     == MediaServerConfig.Destination.SERVER ? "Server" : "LAN");
+    }
+
+    /**
+     * ATAK finished importing a {@code .pref} file. If it changed any ICU setting,
+     * adopt the new values exactly as Settings → Save would: refresh the UI and, when
+     * live, restart the broadcast so the new settings take effect at once. Imports that
+     * don't touch {@code icu_video_prefs} (most of them) are ignored.
+     */
+    private void onPreferencesImported() {
+        MediaServerConfig importedSrv = new MediaServerConfig();
+        EncoderConfig importedEnc = new EncoderConfig();
+        Prefs.load(atakContext(), importedSrv, importedEnc);
+        if (Prefs.snapshot(importedSrv, importedEnc)
+                .equals(Prefs.snapshot(serverConfig, config))) return;
+
+        Log.i(TAG, "ICU settings changed by a .pref import — reloading");
+        DiagLog.d(TAG, "settings reloaded from .pref import");
+        Prefs.load(atakContext(), serverConfig, config);
+        // The settings page stages its own copy of every field; after an import that
+        // copy is stale, and saving it would undo the import.
+        hideSettingsPage();
+        statusWidget.setEnabled(config.showStatusWidget);
+        refreshDestBadge();
+        refreshDestToggle();
+        applyPreviewRotation();
+        if (isBroadcasting()) {
+            restartCapture("ICU settings imported — restarting broadcast…");
+        } else {
+            Toast.makeText(pluginContext, "ICU settings imported", Toast.LENGTH_SHORT).show();
+            restartCapture(null);                    // restarts a preview, if one runs
+        }
     }
 
     /** Quick-bar LAN ⇄ Server flip: switch the destination, swap in that destination's
@@ -1144,12 +1314,8 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                     "No media server configured — set the address in Settings",
                     Toast.LENGTH_LONG).show();
         }
-        if (pipeline.isRunning()) {
-            Toast.makeText(pluginContext, "Switching destination — restarting stream…",
-                    Toast.LENGTH_SHORT).show();
-            stopBroadcast();
-            startBroadcast();
-        }
+        // A preview restarts too: the new destination's profile may pick another camera.
+        restartCapture("Switching destination — restarting stream…");
     }
 
     private void setStatus(String text) {
@@ -1448,6 +1614,7 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
             scanQrBtn.setOnClickListener(x -> {
                 if (!hasCameraPermission()) { requestCameraPermission(); return; }
+                stopPreview();                       // the scanner needs the camera
                 if (pipeline.isRunning()) {
                     Toast.makeText(ctx, "Stop broadcasting before scanning — the camera is in use.",
                             Toast.LENGTH_LONG).show();
@@ -1532,15 +1699,12 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
                         ? MediaServerConfig.Destination.LAN : MediaServerConfig.Destination.SERVER,
                         profiles[1 - sel[0]]);
                 statusWidget.setEnabled(config.showStatusWidget);
-                if (pipeline.isRunning()) root.setKeepScreenOn(!config.streamWithScreenOff);
+                if (isBroadcasting()) root.setKeepScreenOn(!config.streamWithScreenOff);
                 refreshDestBadge();
                 refreshDestToggle();
                 applyPreviewRotation();
                 hideSettingsPage();
-                if (pipeline.isRunning()) {
-                    Toast.makeText(ctx, "Restarting with new settings…", Toast.LENGTH_SHORT).show();
-                    stopBroadcast(); startBroadcast();
-                }
+                restartCapture("Restarting with new settings…");
             });
 
             settingsPage.setVisibility(View.VISIBLE);
@@ -1874,9 +2038,11 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
 
     @Override
     protected void disposeImpl() {
+        prefImport.unregister();
         getMapView().removeOnMapViewResizedListener(orientationWatcher);
         stopRecording(false);
         stopNetworkMonitor();
+        previewing = false;
         pipeline.stop();
         if (transports != null) { transports.stopAll(); transports = null; }
         sensor.stop();
@@ -1895,6 +2061,9 @@ public class ICUVideoDropDownReceiver extends DropDownReceiver
      * itself unloads). {@link StreamStatusWidget} is the map-anchored indicator of
      * whether it's still live. The preview surface is detached separately, via the
      * TextureView listener, so the dead pane view doesn't break the capture session.
+     *
+     * <p>A preview is different: it exists only to be looked at, so closing the pane
+     * stops it and frees the camera.</p>
      */
-    @Override public void onDropDownClose() {}
+    @Override public void onDropDownClose() { stopPreview(); }
 }

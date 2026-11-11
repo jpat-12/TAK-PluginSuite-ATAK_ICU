@@ -189,11 +189,14 @@ public class CapturePipeline {
                 pushFormat();
             }
             @Override public void onNalUnit(byte[] data, boolean isKeyFrame, long ptsUs) {
-                Sink s = sink;
-                if (s != null) s.onNal(data, isKeyFrame, ptsUs);
+                // Recorder FIRST: the local file must never wait on the serve layer.
+                // (The transports are queue-fed AsyncTransports now, but keep the
+                // recorder ahead of them on principle — its mux is microseconds.)
                 // In HQ-record mode the recorder is fed by the record encoder instead.
                 Sink r = recorder;
                 if (r != null && !recorderOnHq) r.onNal(data, isKeyFrame, ptsUs);
+                Sink s = sink;
+                if (s != null) s.onNal(data, isKeyFrame, ptsUs);
                 listener.onFrame(nalCount.incrementAndGet());
             }
             @Override public void onError(String message) {
@@ -301,10 +304,10 @@ public class CapturePipeline {
                     if (r != null) r.onAudioFormat(asc, sampleRate, channels);
                 }
                 @Override public void onAudioSample(byte[] aac, long ptsUs) {
-                    Sink s = sink;
-                    if (s != null) s.onAudioSample(aac, ptsUs);
                     Sink r = recorder;
                     if (r != null) r.onAudioSample(aac, ptsUs);
+                    Sink s = sink;
+                    if (s != null) s.onAudioSample(aac, ptsUs);
                 }
                 @Override public void onError(String message) {
                     Log.w(TAG, "audio disabled: " + message);
@@ -409,25 +412,7 @@ public class CapturePipeline {
     private static int even(int v) { return v & ~1; }
 
     private static EncoderConfig cloneOf(EncoderConfig src) {
-        EncoderConfig c = new EncoderConfig();
-        c.resolution      = src.resolution;
-        c.captureW        = src.captureW;
-        c.captureH        = src.captureH;
-        c.bitrateKbps     = src.bitrateKbps;
-        c.fps             = src.fps;
-        c.gopSeconds      = src.gopSeconds;
-        c.useFrontCamera  = src.useFrontCamera;
-        c.cameraId        = src.cameraId;
-        c.networkCameraUrl = src.networkCameraUrl;
-        c.rotationDegrees = src.rotationDegrees;
-        c.showStatusWidget = src.showStatusWidget;
-        c.streamAudio     = src.streamAudio;
-        c.streamWithScreenOff = src.streamWithScreenOff;
-        c.recordHeight    = src.recordHeight;
-        c.recordFps       = src.recordFps;
-        c.fovRefreshSec   = src.fovRefreshSec;
-        c.fovRangeM       = src.fovRangeM;
-        return c;
+        return src.copy();
     }
 
     /**

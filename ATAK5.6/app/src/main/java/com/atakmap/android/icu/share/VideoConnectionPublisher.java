@@ -2,8 +2,10 @@ package com.atakmap.android.icu.share;
 
 import com.atakmap.android.cot.CotMapComponent;
 import com.atakmap.android.icu.serve.MediaServerConfig;
-import com.atakmap.android.video.ConnectionEntry;
 import com.atakmap.android.video.manager.VideoXMLHandler;
+// 5.6 still ships ConnectionEntry under com.atakmap.android.video (5.7+ moved it to
+// gov.tak.api.video) — this import is THE reason the 5.6/5.7 trees stay separate.
+import com.atakmap.android.video.ConnectionEntry;
 import com.atakmap.comms.TAKServer;
 import com.atakmap.comms.http.TakHttpClient;
 import com.atakmap.comms.http.TakHttpResponse;

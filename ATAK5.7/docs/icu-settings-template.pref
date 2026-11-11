@@ -1,0 +1,77 @@
+<?xml version='1.0' standalone='yes'?>
+<!--
+  ATAK-ICU settings template. Import into ATAK (Import Manager, a data package, or
+  MDM) to set the plugin's settings. Every entry is optional: delete what you don't
+  want to change and the device keeps its current value. Full key reference:
+  docs/PREF_FILE.md.
+
+  The block name "icu_video_prefs" is required. "class" must match the type below.
+-->
+<preferences>
+  <preference version="1" name="icu_video_prefs">
+
+    <!-- ═════════════════════════ BROADCAST ═════════════════════════ -->
+    <!-- LAN = phone serves RTSP itself · SERVER = push to a media server -->
+    <entry key="destination" class="class java.lang.String">SERVER</entry>
+    <!-- RTSP · RTMP · SRT -->
+    <entry key="push_protocol" class="class java.lang.String">RTSP</entry>
+    <entry key="server_host" class="class java.lang.String">mediamtx.example.net</entry>
+    <entry key="server_port" class="class java.lang.Integer">8554</entry>
+    <entry key="username" class="class java.lang.String"></entry>
+    <entry key="password" class="class java.lang.String"></entry>
+    <entry key="srt_passphrase" class="class java.lang.String"></entry>
+    <!-- Per-device. Leave these out of a fleet file so each device defaults to its
+         own callsign; two devices on one path overwrite each other's stream.
+    <entry key="alias" class="class java.lang.String">VIDEO_1</entry>
+    <entry key="stream_path" class="class java.lang.String">icu</entry>
+    -->
+
+    <!-- ══════════════════════════ VIDEO ═══════════════════════════ -->
+    <!-- One profile per destination. Suffix .LAN or .SERVER. -->
+
+    <!-- LAN profile -->
+    <!-- P480 · P720 · P1080 -->
+    <entry key="resolution.LAN" class="class java.lang.String">P720</entry>
+    <!-- 15 · 24 · 30 -->
+    <entry key="fps.LAN" class="class java.lang.Integer">30</entry>
+    <!-- kbps -->
+    <entry key="bitrate.LAN" class="class java.lang.Integer">2500</entry>
+    <!-- -1 = Auto (match ATAK) · 0 = Portrait · 270 = Landscape
+         180 = Reverse Portrait · 90 = Reverse Landscape -->
+    <entry key="rotation.LAN" class="class java.lang.Integer">-1</entry>
+    <entry key="front_camera.LAN" class="class java.lang.Boolean">false</entry>
+    <!-- empty = built-in camera chosen by front_camera · usb · network -->
+    <entry key="camera_id.LAN" class="class java.lang.String"></entry>
+    <!-- 1 · 2 · 4 seconds -->
+    <entry key="keyframe_sec.LAN" class="class java.lang.Integer">2</entry>
+    <entry key="stream_audio.LAN" class="class java.lang.Boolean">true</entry>
+
+    <!-- SERVER profile -->
+    <entry key="resolution.SERVER" class="class java.lang.String">P720</entry>
+    <entry key="fps.SERVER" class="class java.lang.Integer">30</entry>
+    <entry key="bitrate.SERVER" class="class java.lang.Integer">2500</entry>
+    <entry key="rotation.SERVER" class="class java.lang.Integer">-1</entry>
+    <entry key="front_camera.SERVER" class="class java.lang.Boolean">false</entry>
+    <entry key="camera_id.SERVER" class="class java.lang.String"></entry>
+    <entry key="keyframe_sec.SERVER" class="class java.lang.Integer">2</entry>
+    <entry key="stream_audio.SERVER" class="class java.lang.Boolean">true</entry>
+
+    <!-- Shared by both destinations -->
+    <!-- Used when camera_id is "network" -->
+    <entry key="net_camera_url" class="class java.lang.String">rtsp://172.20.1.1:554/stream1</entry>
+    <!-- 0 = same as stream · 480 · 720 · 1080 -->
+    <entry key="record_height" class="class java.lang.Integer">0</entry>
+    <!-- 0 = same as stream · 15 · 24 · 30 -->
+    <entry key="record_fps" class="class java.lang.Integer">0</entry>
+    <!-- seconds, minimum 1 -->
+    <entry key="fov_refresh_sec" class="class java.lang.Integer">3</entry>
+    <!-- metres, minimum 1 -->
+    <entry key="fov_range_m" class="class java.lang.Integer">100</entry>
+
+    <!-- ═════════════════════ DISPLAY & POWER ══════════════════════ -->
+    <entry key="show_status_widget" class="class java.lang.Boolean">true</entry>
+    <!-- true = keep streaming with the screen off -->
+    <entry key="stream_screen_off" class="class java.lang.Boolean">false</entry>
+
+  </preference>
+</preferences>

@@ -18,18 +18,20 @@
 
     <!-- Quick-bar item stacked in the right-edge rail: same [button + label], but
          spaced vertically instead of weighted horizontally. -->
+    <!-- Sized so all four stacked quick actions (Broadcast/Record/Toggle/Blackout)
+         fit the pane height on a 1080p phone — 46dp buttons clipped the fourth. -->
     <style name="IcuQuickItemVertical">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:orientation">vertical</item>
         <item name="android:gravity">center_horizontal</item>
-        <item name="android:layout_marginBottom">10dp</item>
+        <item name="android:layout_marginBottom">6dp</item>
     </style>
 
     <style name="IcuQuickButton">
-        <item name="android:layout_width">46dp</item>
-        <item name="android:layout_height">46dp</item>
-        <item name="android:padding">10dp</item>
+        <item name="android:layout_width">38dp</item>
+        <item name="android:layout_height">38dp</item>
+        <item name="android:padding">8dp</item>
         <item name="android:scaleType">fitCenter</item>
         <item name="android:background">@drawable/bg_hud_button</item>
     </style>
@@ -37,9 +39,9 @@
     <style name="IcuQuickLabel">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">3dp</item>
+        <item name="android:layout_marginTop">2dp</item>
         <item name="android:textColor">@color/icu_text_dim</item>
-        <item name="android:textSize">10sp</item>
+        <item name="android:textSize">9sp</item>
     </style>
 
     <!-- Field label used in the settings dialog. -->

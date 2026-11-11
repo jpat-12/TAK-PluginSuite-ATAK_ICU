@@ -360,7 +360,7 @@ public class RtspPusher {
         StringBuilder r = new StringBuilder();
         r.append(method).append(' ').append(url).append(" RTSP/1.0\r\n");
         r.append("CSeq: ").append(cseq++).append("\r\n");
-        r.append("User-Agent: ICU-VideoStreamer\r\n");
+        r.append("User-Agent: ATAK-ICU\r\n");
         if (session != null) r.append("Session: ").append(session).append("\r\n");
         if (digest) r.append(digestHeader(method, url));   // Digest is per-request (method+uri)
         else if (authHeader != null) r.append(authHeader);

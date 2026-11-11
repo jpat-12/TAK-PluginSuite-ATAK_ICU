@@ -147,9 +147,21 @@ public class StreamStatusWidget implements AtakMapView.OnMapViewResizedListener 
                 .build();
         iconWidget.setIcon(pluginIcon);
 
+        // The icon bitmap alone is a small tap target on a high-density screen, so pad
+        // the hit box well past it — sideways and above by ~12dp, and downward across
+        // the status dot and the "LIVE" label, which read as part of the button. Must
+        // come after setIcon(), which resets the bounds to exactly the bitmap.
+        int hitPad = Math.round(12 * density);
+        iconWidget.setMarkerHitBounds(-hitPad, -hitPad,
+                Math.round(iconPx) + hitPad, Math.round(iconPx + labelReservePx) + hitPad);
+
         dotGreen = buildDotIcon(pluginContext, 0xFF2ECC71, "icu_status_dot_green.png");
         dotRed   = buildDotIcon(pluginContext, 0xFFE74C3C, "icu_status_dot_red.png");
         dotWidget.setIcon(dotRed);
+        // The dot and label sit above the icon in the widget stack; if they're touchable
+        // they swallow taps on the icon's corner/label area without doing anything.
+        // (liveText gets the same treatment right after it's constructed below.)
+        dotWidget.setTouchable(false);
 
         int liveTextSizePx = Math.round(10 * density);
         liveText = new TextWidget("LIVE",
@@ -163,6 +175,7 @@ public class StreamStatusWidget implements AtakMapView.OnMapViewResizedListener 
         liveTextWidthPx = measure.measureText("LIVE");
         liveText.setBackground(TextWidget.TRANSLUCENT_BLACK);
         liveText.setVisible(false);
+        liveText.setTouchable(false);
 
         // Tap = open the plugin pane. Long-press-and-drag = relocate the whole badge.
         iconWidget.addOnClickListener(new MapWidget.OnClickListener() {

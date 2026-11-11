@@ -37,6 +37,20 @@ public class RtspServer {
     public void setSps(byte[] sps) { this.sps = sps; }
     public void setPps(byte[] pps) { this.pps = pps; }
 
+    // ── Optional AAC audio track (RFC 3640 mpeg4-generic), trackID=2 ──
+    // Advertised in the SDP only once the AudioSpecificConfig is known (i.e. the
+    // operator has mic audio on). Mirrors RtspPusher's audio side, but appended
+    // AFTER the KLV m-line so the long-established video=0/KLV=1 track ids never
+    // move for existing viewers.
+    private volatile byte[] audioAsc;
+    private volatile int    audioRate = 44100, audioChannels = 1;
+
+    public void setAudioFormat(byte[] asc, int sampleRate, int channels) {
+        this.audioAsc = asc;
+        this.audioRate = sampleRate;
+        this.audioChannels = channels;
+    }
+
     private ServerSocket serverSocket;
     private Thread       acceptThread;
     private volatile boolean running;
@@ -92,6 +106,16 @@ public class RtspServer {
         }
     }
 
+    /** One AAC access unit on the audio track (trackID=2) to every client that SETUP it.
+     *  RTP audio clock = the sample rate (not 90kHz), per the SDP rtpmap. */
+    public void sendAudioSample(byte[] aac, long ptsUs) {
+        if (clients.isEmpty() || aac == null || aac.length == 0) return;
+        long rtpTs = ptsUs * audioRate / 1_000_000L;
+        for (ClientSession c : clients) {
+            if (c.playing) c.sendAudioUnit(aac, rtpTs);
+        }
+    }
+
     /** One MISB KLV packet, sent as a single RTP packet on the KLV track (trackID=1) to
      *  every client that SETUP that track — same 90kHz clock convention as the video track,
      *  but its own SSRC/sequence/payload type (97, "smpte336m/90000"). */
@@ -124,6 +148,12 @@ public class RtspServer {
         private int klvServerRtpPort;
         private final int klvSsrc = new Random().nextInt();
         private volatile int klvSeq = 0;
+
+        // ── Audio track (trackID=2) — same opt-in pattern as KLV. ──
+        private DatagramSocket audioUdpSocket;
+        private int audioClientRtpPort;
+        private final int audioSsrc = new Random().nextInt();
+        private volatile int audioSeq = 0;
 
         ClientSession(Socket s) { this.socket = s; }
 
@@ -192,15 +222,18 @@ public class RtspServer {
             String sdp = buildSdp();
             respond(out, 200, "OK", cseq,
                     "Content-Type: application/sdp\r\n" +
-                    "Content-Length: " + sdp.length() + "\r\n" +
-                    "\r\n" + sdp);
+                    "Content-Length: " + sdp.length() + "\r\n", sdp);
         }
 
         private void handleSetup(PrintWriter out, String cseq, String uri, int clientPort) {
             int track = trackIdOf(uri);
             int srvPort;
             try {
-                if (track == 1) {
+                if (track == 2) {
+                    audioClientRtpPort = clientPort;
+                    audioUdpSocket     = new DatagramSocket();
+                    srvPort = audioUdpSocket.getLocalPort();
+                } else if (track == 1) {
                     klvClientRtpPort = clientPort;
                     klvUdpSocket     = new DatagramSocket();
                     klvServerRtpPort = klvUdpSocket.getLocalPort();
@@ -232,19 +265,31 @@ public class RtspServer {
             close();
         }
 
-        private void respond(PrintWriter out, int code, String msg, String cseq, String extra) {
-            out.print("RTSP/1.0 " + code + " " + msg + "\r\n");
-            out.print("CSeq: " + cseq + "\r\n");
-            out.print("Server: ICU-VideoStreamer/1.0\r\n");
-            if (!extra.isEmpty()) out.print(extra);
-            if (!extra.endsWith("\r\n")) out.print("\r\n");
+        private void respond(PrintWriter out, int code, String msg, String cseq, String headers) {
+            respond(out, code, msg, cseq, headers, "");
+        }
+
+        /** {@code headers}: zero or more complete "Name: value\r\n" lines — the blank
+         *  line ending the header block is appended HERE, unconditionally. The old
+         *  logic skipped it whenever the extra headers already ended in CRLF, so
+         *  OPTIONS/SETUP/PLAY responses went out unterminated; ATAK's player happens
+         *  to tolerate that, but strict RTSP clients (ffmpeg/ffprobe among them) hang
+         *  forever waiting for end-of-headers. */
+        private void respond(PrintWriter out, int code, String msg, String cseq,
+                             String headers, String body) {
+            out.print("RTSP/1.0 " + code + " " + msg + "\r\n" +
+                      "CSeq: " + cseq + "\r\n" +
+                      "Server: ATAK-ICU/1.0\r\n" +
+                      headers +
+                      "\r\n" + body);
             out.flush();
         }
 
         private String buildSdp() {
             String spsB64 = (sps != null) ? Base64.encodeToString(strip(sps), Base64.NO_WRAP) : "";
             String ppsB64 = (pps != null) ? Base64.encodeToString(strip(pps), Base64.NO_WRAP) : "";
-            return "v=0\r\n" +
+            String base =
+                   "v=0\r\n" +
                    "o=- 0 0 IN IP4 0.0.0.0\r\n" +
                    "s=ATAK-ICU\r\n" +
                    "c=IN IP4 0.0.0.0\r\n" +
@@ -258,6 +303,23 @@ public class RtspServer {
                    "m=application 0 RTP/AVP 97\r\n" +
                    "a=rtpmap:97 smpte336m/90000\r\n" +
                    "a=control:trackID=1\r\n";
+            // AAC audio (RFC 3640 mpeg4-generic), only once the AudioSpecificConfig
+            // exists (mic audio on). Appended after KLV so video=0/KLV=1 never move.
+            byte[] asc = audioAsc;
+            if (asc != null && asc.length > 0) {
+                base += "m=audio 0 RTP/AVP 98\r\n" +
+                        "a=rtpmap:98 mpeg4-generic/" + audioRate + "/" + audioChannels + "\r\n" +
+                        "a=fmtp:98 streamtype=5;profile-level-id=1;mode=AAC-hbr;" +
+                        "sizelength=13;indexlength=3;indexdeltalength=3;config=" + hex(asc) + "\r\n" +
+                        "a=control:trackID=2\r\n";
+            }
+            return base;
+        }
+
+        private String hex(byte[] d) {
+            StringBuilder sb = new StringBuilder(d.length * 2);
+            for (byte b : d) sb.append(String.format("%02X", b));
+            return sb.toString();
         }
 
         // ── RTP ───────────────────────────────────────────────────────────────
@@ -289,6 +351,22 @@ public class RtspServer {
             byte[] p = buildRtpPacket(klv, 0, klv.length, seq, rtpTs, true, (byte) 97, klvSsrc);
             try { klvUdpSocket.send(new DatagramPacket(p, p.length, clientAddr, klvClientRtpPort)); }
             catch (IOException e) { Log.w(TAG, "KLV UDP: " + e.getMessage()); }
+        }
+
+        /** One AAC access unit as an RFC 3640 (AAC-hbr) RTP packet on the audio track —
+         *  AU-headers-length (16 bits) + one AU-header (13-bit size, 3-bit index=0),
+         *  mirroring RtspPusher.sendAudioSample. An AAC frame always fits one packet. */
+        void sendAudioUnit(byte[] aac, long rtpTs) {
+            if (audioUdpSocket == null || !active) return;
+            byte[] payload = new byte[4 + aac.length];
+            payload[0] = 0x00; payload[1] = 0x10;               // AU-headers-length = 16 bits
+            int hdr = (aac.length & 0x1FFF) << 3;               // size<<3 | index(0)
+            payload[2] = (byte) (hdr >> 8); payload[3] = (byte) hdr;
+            System.arraycopy(aac, 0, payload, 4, aac.length);
+            int seq = audioSeq++;
+            byte[] p = buildRtpPacket(payload, 0, payload.length, seq, rtpTs, true, (byte) 98, audioSsrc);
+            try { audioUdpSocket.send(new DatagramPacket(p, p.length, clientAddr, audioClientRtpPort)); }
+            catch (IOException e) { Log.w(TAG, "audio UDP: " + e.getMessage()); }
         }
 
         private void fuA(byte[] d, int off, int len, long ts, int seq, boolean lastMark) {
@@ -343,9 +421,10 @@ public class RtspServer {
         void close() {
             active = false; playing = false;
             if (listener != null) listener.onClientDisconnected();
-            try { if (socket       != null) socket.close();       } catch (IOException ignored) {}
-            try { if (udpSocket    != null) udpSocket.close();    } catch (Exception  ignored) {}
-            try { if (klvUdpSocket != null) klvUdpSocket.close(); } catch (Exception  ignored) {}
+            try { if (socket         != null) socket.close();         } catch (IOException ignored) {}
+            try { if (udpSocket      != null) udpSocket.close();      } catch (Exception  ignored) {}
+            try { if (klvUdpSocket   != null) klvUdpSocket.close();   } catch (Exception  ignored) {}
+            try { if (audioUdpSocket != null) audioUdpSocket.close(); } catch (Exception  ignored) {}
             clients.remove(this);
         }
 

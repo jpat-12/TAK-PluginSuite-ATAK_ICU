@@ -8,11 +8,15 @@
     <string name="icu_broadcast">Broadcast</string>
     <string name="icu_stop">Stop</string>
     <string name="icu_preview_placeholder">Camera preview</string>
+    <string name="icu_start_preview">Start preview</string>
+    <string name="icu_stop_preview">Stop preview</string>
+    <string name="icu_status_preview">Preview — not broadcasting</string>
     <string name="icu_settings">Settings</string>
     <string name="icu_record">Record</string>
     <string name="icu_recording">Recording</string>
     <string name="icu_snapshot">Snapshot</string>
     <string name="icu_blackout">Blackout</string>
+    <string name="icu_dest_toggle">LAN/Server</string>
 
     <!-- Settings -->
     <string name="icu_settings_title">Broadcast Settings</string>
@@ -63,8 +67,10 @@
         <item>30</item>
     </string-array>
     <!-- Order matches rotationIndex()/rotationValue() in ICUVideoDropDownReceiver:
-         Portrait=0°, Landscape=270°, Reverse Portrait=180°, Reverse Landscape=90°. -->
+         Auto=-1 (follow ATAK's current/forced orientation), Portrait=0°,
+         Landscape=270°, Reverse Portrait=180°, Reverse Landscape=90°. -->
     <string-array name="icu_rotations">
+        <item>Auto — match ATAK</item>
         <item>Portrait</item>
         <item>Landscape</item>
         <item>Reverse Portrait</item>

@@ -1,5 +1,63 @@
 # Changelog
 
+## 3.2.0 — 2026-11-10
+
+### ATAK-ICU 5.6 + 5.7 + 5.8 trees
+- **Provision every setting with an ATAK `.pref` file.** The QR code fills in only the
+  stream URL. A standard ATAK preference file with an `icu_video_prefs` block can now
+  set every field on the BROADCAST, VIDEO (both the LAN and the Server profile) and
+  DISPLAY & POWER cards. Use the Import Manager, a data package or MDM, the same as
+  for ATAK's own `.pref` files. The plugin applies an import at once, with no ATAK
+  restart. A live broadcast restarts with the new settings, the same as Settings →
+  Save. Template: `ATAK5.x/docs/icu-settings-template.pref`; key reference:
+  `ATAK5.x/docs/PREF_FILE.md`.
+- **Camera preview without broadcasting.** When the panel is open and not live, a
+  **Start preview** button on the preview area shows the active camera, framed and
+  rotated exactly as it would be broadcast. It works with the phone camera, a USB
+  camera or a network camera. Nothing leaves the device: no stream, no audio, no CoT.
+  While the preview runs, the button reads **Stop preview**. Tapping Broadcast goes
+  live from the preview. Closing the panel stops the preview. Snapshot and Record
+  still need a live broadcast.
+- Settings are now read tolerantly. A value stored with the wrong type (for example a
+  number written as text in a hand-made `.pref`) is converted, or falls back to its
+  default, and no longer stops the plugin from loading.
+
+## 3.1.2 — 2026-09-15
+
+### All trees
+- **The 5.6 tree is synced to 3.1.2** — it had been parked at the 2.5 era.
+  It is now a copy of the 5.7 tree with the single source difference 5.6
+  requires (`ConnectionEntry` still lives under `com.atakmap.android.video`
+  there), so every 3.x feature and fix below applies to 5.6 fleets too.
+
+### ATAK-ICU 5.6 + 5.7 + 5.8 trees
+- **Local recordings no longer pause when the network chokes.** Transports were
+  fed synchronously on the encoder's drain thread, so a blocking socket write on
+  a congested link stalled the encoder, froze the GL stage, and baked real
+  capture gaps into the on-device MP4 — the field symptom was every operator's
+  recording "pausing like it was buffering", regardless of record-quality
+  setting. Every transport now runs behind its own bounded queue + sender
+  thread (`serve/AsyncTransport`): when the network can't keep up, the STREAM
+  drops frames (resuming on a clean keyframe/GOP boundary) while capture,
+  recording, and other transports keep running at full rate. The recorder is
+  also fed before the serve layer in the pipeline callbacks.
+- **Audio can no longer drift out of sync in recordings.** AAC timestamps came
+  purely from the mic's running sample count; a buffer overrun on a loaded
+  device silently lost samples and let the audio clock fall progressively
+  behind the video's (camera-clock) timestamps. The sample clock is now
+  anchored to the monotonic clock and resyncs forward when it lags >150 ms, so
+  lost audio lands as a small gap where the loss happened instead of growing
+  lip-sync error. Resyncs are noted in `ICU Video/logs/icu-diag.log`.
+- **Recordings now save to `DCIM/ICU Video`** and are media-scanned on save, so
+  they appear in the photo album immediately as their own segregated "ICU
+  Video" album (previously `atak/ICU Video`, which gallery apps don't index).
+  Diag logs stay under `atak/ICU Video/logs`.
+- **LAN viewers now get audio.** The on-device RTSP server grows the same
+  RFC 3640 AAC track the server-push side has always had (`trackID=2`,
+  advertised only while mic audio is on) — previously the LAN broadcast was
+  silent video and only server-push viewers heard the operator. Video and KLV
+  track ids are unchanged, so existing viewers are unaffected.
+
 ## 3.1.1 — 2026-08-27
 
 ### ATAK-ICU 5.7 tree

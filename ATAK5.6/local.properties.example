@@ -5,17 +5,19 @@
 # Windows default: C:\Users\<you>\AppData\Local\Android\Sdk
 sdk.dir=C\:\\Users\\YOUR_USERNAME\\AppData\\Local\\Android\\Sdk
 
-# ── ATAK CIV SDK (5.6.0) ─────────────────────────────────────────────────────
-sdk.path=C\:\\path\\to\\ATAK-CIV-5.6.0-SDK
-takdev.plugin=C\:\\path\\to\\ATAK-CIV-5.6.0-SDK\\atak-gradle-takdev.jar
+# ── ATAK CIV SDK (5.7.0.7) ───────────────────────────────────────────────────
+# NOTE: the 5.7 SDK zip extracts to a nested folder — sdk.path is the INNER
+# directory, the one that actually contains main.jar and android_keystore.
+sdk.path=C\:\\path\\to\\ATAK-CIV-5.7.0.7-SDK\\ATAK-CIV-5.7.0.7-SDK
+takdev.plugin=C\:\\path\\to\\ATAK-CIV-5.7.0.7-SDK\\ATAK-CIV-5.7.0.7-SDK\\atak-gradle-takdev.jar
 
 # ── Signing keys (takdev defaults; keystore auto-staged from the SDK) ─────────
 takDebugKeyAlias=wintec_mapping
-takDebugKeyFile=C\:\\path\\to\\ATAK-CIV-5.6.0-SDK\\android_keystore
+takDebugKeyFile=C\:\\path\\to\\ATAK-CIV-5.7.0.7-SDK\\ATAK-CIV-5.7.0.7-SDK\\android_keystore
 takDebugKeyFilePassword=tnttnt
 takDebugKeyPassword=tnttnt
 
 takReleaseKeyAlias=wintec_mapping
-takReleaseKeyFile=C\:\\path\\to\\ATAK-CIV-5.6.0-SDK\\android_keystore
+takReleaseKeyFile=C\:\\path\\to\\ATAK-CIV-5.7.0.7-SDK\\ATAK-CIV-5.7.0.7-SDK\\android_keystore
 takReleaseKeyFilePassword=tnttnt
 takReleaseKeyPassword=tnttnt
